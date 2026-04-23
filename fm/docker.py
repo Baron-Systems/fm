@@ -100,7 +100,7 @@ def compose_logs_follow(bench_dir: Path, service: Optional[str] = None) -> None:
     run_docker_compose(bench_dir, args, capture_output=False)
 
 
-def wait_for_service(host: str, port: int, timeout: int = 120) -> None:
+def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
     """
     Wait until TCP service is reachable.
     Retries every 2 seconds until timeout.
@@ -111,7 +111,7 @@ def wait_for_service(host: str, port: int, timeout: int = 120) -> None:
     while time.time() < deadline:
         try:
             with socket.create_connection((host, port), timeout=2):
-                return
+                return True
         except OSError:
             time.sleep(2)
     raise DockerCommandError(f"Service {host}:{port} did not become ready within {timeout}s")

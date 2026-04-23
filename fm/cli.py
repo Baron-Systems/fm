@@ -25,7 +25,7 @@ def _handle_error(exc: Exception) -> None:
 def _resolve_bench_name(name: str | None) -> str:
     if name:
         return name
-    benches = [path.name for path in core.get_all_benches(config=config)]
+    benches = core.get_all_benches(config=config)
     try:
         selected = select_bench(config=config, benches=benches)
         console.print(f"[cyan]Selected bench:[/cyan] [bold]{selected}[/bold]")

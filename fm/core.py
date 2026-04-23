@@ -10,6 +10,10 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from .config import FMConfig, load_config
 from . import docker
+from .state import get_all_benches as state_get_all_benches
+from .state import get_bench as state_get_bench
+from .state import remove_bench as state_remove_bench
+from .state import upsert_bench as state_upsert_bench
 from .utils import generate_secure_password, validate_domain
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -24,19 +28,24 @@ LOGGER = logging.getLogger("fm")
 
 
 def get_bench_path(name: str, config: FMConfig | None = None) -> Path:
+    state_bench = state_get_bench(name)
+    if state_bench and state_bench.get("path"):
+        return Path(str(state_bench["path"]))
     cfg = config or load_config()
     return cfg.benches_dir / name
 
 
 def bench_exists(name: str, config: FMConfig | None = None) -> bool:
-    return get_bench_path(name, config=config).exists()
+    bench = state_get_bench(name)
+    if not bench:
+        return False
+    path = Path(str(bench.get("path", get_bench_path(name, config=config))))
+    return path.exists()
 
 
-def get_all_benches(config: FMConfig | None = None) -> list[Path]:
-    cfg = config or load_config()
-    if not cfg.benches_dir.exists():
-        return []
-    return sorted(path for path in cfg.benches_dir.iterdir() if path.is_dir())
+def get_all_benches(config: FMConfig | None = None) -> list[str]:
+    benches = state_get_all_benches()
+    return sorted(benches.keys())
 
 
 def ensure_bench_missing(name: str, config: FMConfig | None = None) -> None:
@@ -45,9 +54,12 @@ def ensure_bench_missing(name: str, config: FMConfig | None = None) -> None:
 
 
 def ensure_bench_exists(name: str, config: FMConfig | None = None) -> Path:
+    bench = state_get_bench(name)
+    if not bench:
+        raise BenchError(f"Bench '{name}' does not exist in state.")
     path = get_bench_path(name, config=config)
     if not path.exists():
-        raise BenchError(f"Bench '{name}' does not exist.")
+        raise BenchError(f"Bench '{name}' path does not exist: {path}")
     return path
 
 
@@ -105,13 +117,14 @@ def _save_credentials(bench_dir: Path, domain: str, admin_password: str, db_root
     return creds_path
 
 
-def wait_for_service(host: str, port: int, timeout: int = 120) -> None:
-    docker.wait_for_service(host=host, port=port, timeout=timeout)
+def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
+    return docker.wait_for_service(host=host, port=port, timeout=timeout)
 
 
 def _wait_for_dependencies(bench_dir: Path, timeout: int = 120) -> None:
     docker.wait_for_service_in_backend(bench_dir, "db", 3306, timeout=timeout)
     docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=timeout)
+    docker.wait_for_service_in_backend(bench_dir, "redis", 6379, timeout=timeout)
 
 
 def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tuple[Path, str, Path]:
@@ -124,6 +137,14 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
     bench_dir = get_bench_path(name, config=cfg)
     cfg.benches_dir.mkdir(parents=True, exist_ok=True)
     bench_dir.mkdir(parents=True, exist_ok=False)
+    state_upsert_bench(
+        name,
+        {
+            "domain": domain,
+            "path": str(bench_dir),
+            "status": "creating",
+        },
+    )
 
     compose_content = _render_compose(
         name=name,
@@ -148,6 +169,14 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         )
         docker.exec_in_backend(bench_dir, f"bench --site {domain} install-app erpnext")
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
+        state_upsert_bench(
+            name,
+            {
+                "domain": domain,
+                "path": str(bench_dir),
+                "status": "running",
+            },
+        )
         LOGGER.info("Bench created: %s", name)
         return bench_dir, admin_password, creds_path
     except Exception as exc:
@@ -157,28 +186,33 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         except Exception as down_exc:  # noqa: BLE001
             LOGGER.warning("Rollback docker down failed: %s", down_exc)
         shutil.rmtree(bench_dir, ignore_errors=True)
+        state_remove_bench(name)
         raise BenchError(f"Bench creation failed and rollback completed: {exc}") from exc
 
 
 def start_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_start(bench_dir)
+    state_upsert_bench(name, {"status": "running"})
 
 
 def stop_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_stop(bench_dir)
+    state_upsert_bench(name, {"status": "stopped"})
 
 
 def restart_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_restart(bench_dir)
+    state_upsert_bench(name, {"status": "running"})
 
 
 def delete_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_down(bench_dir, remove_volumes=True)
     shutil.rmtree(bench_dir)
+    state_remove_bench(name)
 
 
 def _bench_domain_from_compose(bench_dir: Path) -> str:
@@ -197,8 +231,10 @@ def _bench_domain_from_compose(bench_dir: Path) -> str:
 
 def list_benches(config: FMConfig | None = None) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    for bench_path in get_all_benches(config=config):
-        status = "unknown"
+    for bench_name in get_all_benches(config=config):
+        bench = state_get_bench(bench_name) or {}
+        bench_path = Path(str(bench.get("path", get_bench_path(bench_name, config=config))))
+        status = str(bench.get("status", "unknown"))
         try:
             services = docker.compose_ps_json(bench_path)
             if not services:
@@ -211,9 +247,9 @@ def list_benches(config: FMConfig | None = None) -> list[dict[str, str]]:
             status = "error"
         rows.append(
             {
-                "name": bench_path.name,
+                "name": bench_name,
                 "status": status,
-                "domain": _bench_domain_from_compose(bench_path),
+                "domain": str(bench.get("domain", _bench_domain_from_compose(bench_path))),
             }
         )
     return rows
