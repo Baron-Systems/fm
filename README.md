@@ -1,19 +1,20 @@
-# fm - Mini Frappe Manager
+# fm - Frappe Manager CLI
 
-`fm` is a production-ready Python CLI for managing multi-bench ERPNext deployments with Docker Compose and Traefik.
+`fm` is a production-oriented CLI to provision and manage multi-bench ERPNext stacks with Docker Compose and Traefik.
 
-## Features
+## Highlights
 
-- Create isolated ERPNext benches under `benches/<name>/`
-- Generate bench-specific `docker-compose.yml` from Jinja2 template
-- Start, stop, restart, delete, and list benches
-- Bootstrap ERPNext site automatically (`bench new-site` + `install-app erpnext`)
-- Traefik labels for HTTPS routing with Let's Encrypt resolver
-- Optional logs and health commands
+- Strong validation before create (domain, Docker binaries, Docker network)
+- Fault-tolerant `create` with rollback (`docker compose down -v` + directory cleanup)
+- Health checks with retry (DB `3306`, backend `8000`) instead of fixed sleep
+- Secure generated credentials (no hardcoded `admin/admin`)
+- Config-driven defaults via `~/.fm/config.yaml`
+- Rich UX + structured logging
+- Bench status and list views including status/domain metadata
 
-## Installation
+## Install
 
-### Local development
+### Local
 
 ```bash
 python -m venv .venv
@@ -22,28 +23,26 @@ pip install -e .
 fm --help
 ```
 
-### pipx (GitHub)
+### pipx from GitHub
 
 ```bash
 pipx install git+https://github.com/<user>/<repo>
 ```
 
-## Usage
+## Commands
 
 ```bash
 fm create <name> <domain>
-fm start <name>
-fm stop <name>
-fm restart <name>
-fm delete <name>
+fm start [name]
+fm stop [name]
+fm restart [name]
+fm delete [name]
 fm list
-```
-
-Optional commands:
-
-```bash
-fm logs <name> --service backend --lines 200
+fm status <name>
+fm info [name]
 fm health <name>
+fm logs [name] [--service backend] [--follow/--no-follow]
+fm shell <name> [--site mysite.example.com]
 ```
 
 ## Example
@@ -51,21 +50,61 @@ fm health <name>
 ```bash
 fm create acme acme.example.com
 fm list
-fm health acme
+fm status acme
 fm logs acme --service frontend
 fm stop acme
 fm start acme
-fm delete acme --force
+fm delete acme
 ```
 
-## Operational Notes
+`fm delete` asks:
 
-- Ensure Docker and Docker Compose plugin are installed (`docker compose version`)
-- Ensure Traefik is already running on your host network with `websecure` entrypoint and `le` certresolver
-- Default bootstrap credentials are `admin/admin` (change immediately in production)
-- Bench creation waits for a fixed startup delay before running `bench` commands
+`Are you sure? This will delete all data (y/N)`
 
-## Repository bootstrap
+Only exact `y` proceeds.
+
+Interactive mode:
+
+- If `name` is omitted for `info`, `start`, `stop`, `restart`, `delete`, or `logs`,
+  `fm` opens an interactive bench selector (arrow keys + Enter).
+
+## Configuration
+
+`fm` auto-creates `~/.fm/config.yaml` on first run.
+
+Example:
+
+```yaml
+paths:
+  benches_dir: benches
+docker:
+  network: web
+erpnext:
+  certresolver: le
+  images:
+    erpnext: frappe/erpnext:v16
+    mariadb: mariadb:10.6
+    redis: redis:7-alpine
+defaults:
+  db_root_password: null
+  admin_password: null
+logging:
+  write_file: false
+  file: ~/.fm/fm.log
+```
+
+Notes:
+
+- If password defaults are `null`, secure random values are generated at create time.
+- Credentials are saved in `benches/<name>/.credentials.json` with restricted permissions.
+
+## Requirements
+
+- Docker + Docker Compose plugin installed
+- Existing Docker network `web` (or configure another in `~/.fm/config.yaml`)
+- Traefik configured with `websecure` entrypoint and matching `certresolver`
+
+## Repo bootstrap
 
 ```bash
 git init
@@ -75,8 +114,6 @@ git branch -M main
 git remote add origin https://github.com/<user>/<repo>
 git push -u origin main
 ```
-
-Then install with:
 
 ```bash
 pipx install git+https://github.com/<user>/<repo>

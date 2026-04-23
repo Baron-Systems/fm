@@ -1,6 +1,6 @@
 services:
   db:
-    image: mariadb:10.6
+    image: {{ MARIADB_IMAGE }}
     container_name: {{ NAME }}-db
     command:
       - --character-set-server=utf8mb4
@@ -8,19 +8,19 @@ services:
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed
     environment:
-      MYSQL_ROOT_PASSWORD: admin
-      MARIADB_ROOT_PASSWORD: admin
+      MYSQL_ROOT_PASSWORD: {{ DB_ROOT_PASSWORD }}
+      MARIADB_ROOT_PASSWORD: {{ DB_ROOT_PASSWORD }}
     volumes:
       - db-data:/var/lib/mysql
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: {{ REDIS_IMAGE }}
     container_name: {{ NAME }}-redis
     restart: unless-stopped
 
   backend:
-    image: frappe/erpnext:v16
+    image: {{ ERPNEXT_IMAGE }}
     container_name: {{ NAME }}-backend
     depends_on:
       - db
@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
 
   websocket:
-    image: frappe/erpnext:v16
+    image: {{ ERPNEXT_IMAGE }}
     container_name: {{ NAME }}-websocket
     depends_on:
       - backend
@@ -49,7 +49,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: frappe/erpnext:v16
+    image: {{ ERPNEXT_IMAGE }}
     container_name: {{ NAME }}-frontend
     depends_on:
       - backend
@@ -68,11 +68,19 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
       - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
-      - "traefik.http.routers.{{ NAME }}.tls.certresolver=le"
+      - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
       - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8080"
+    networks:
+      - default
+      - edge
     restart: unless-stopped
 
 volumes:
   db-data:
   sites:
   logs:
+
+networks:
+  edge:
+    external: true
+    name: {{ DOCKER_NETWORK }}

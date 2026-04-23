@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
+import logging
+import socket
 import shutil
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from .config import FMConfig, load_config
 from . import docker
+from .utils import generate_secure_password, validate_domain
 
-BENCHES_DIR = Path("benches")
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 COMPOSE_FILE_NAME = "docker-compose.yml"
 
@@ -16,27 +20,48 @@ class BenchError(RuntimeError):
     """Raised when a bench operation fails."""
 
 
-def _bench_path(name: str) -> Path:
-    return BENCHES_DIR / name
+LOGGER = logging.getLogger("fm")
 
 
-def bench_exists(name: str) -> bool:
-    return _bench_path(name).exists()
+def get_bench_path(name: str, config: FMConfig | None = None) -> Path:
+    cfg = config or load_config()
+    return cfg.benches_dir / name
 
 
-def ensure_bench_missing(name: str) -> None:
-    if bench_exists(name):
+def bench_exists(name: str, config: FMConfig | None = None) -> bool:
+    return get_bench_path(name, config=config).exists()
+
+
+def get_all_benches(config: FMConfig | None = None) -> list[Path]:
+    cfg = config or load_config()
+    if not cfg.benches_dir.exists():
+        return []
+    return sorted(path for path in cfg.benches_dir.iterdir() if path.is_dir())
+
+
+def ensure_bench_missing(name: str, config: FMConfig | None = None) -> None:
+    if bench_exists(name, config=config):
         raise BenchError(f"Bench '{name}' already exists.")
 
 
-def ensure_bench_exists(name: str) -> Path:
-    path = _bench_path(name)
+def ensure_bench_exists(name: str, config: FMConfig | None = None) -> Path:
+    path = get_bench_path(name, config=config)
     if not path.exists():
         raise BenchError(f"Bench '{name}' does not exist.")
     return path
 
 
-def _render_compose(name: str, domain: str, site_name: str) -> str:
+def _render_compose(
+    name: str,
+    domain: str,
+    site_name: str,
+    db_root_password: str,
+    docker_network: str,
+    certresolver: str,
+    erpnext_image: str,
+    mariadb_image: str,
+    redis_image: str,
+) -> str:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
         autoescape=False,
@@ -45,73 +70,338 @@ def _render_compose(name: str, domain: str, site_name: str) -> str:
         lstrip_blocks=True,
     )
     template = env.get_template("docker-compose.yml.j2")
-    return template.render(NAME=name, DOMAIN=domain, SITE_NAME=site_name)
+    return template.render(
+        NAME=name,
+        DOMAIN=domain,
+        SITE_NAME=site_name,
+        DB_ROOT_PASSWORD=db_root_password,
+        DOCKER_NETWORK=docker_network,
+        CERTRESOLVER=certresolver,
+        ERPNEXT_IMAGE=erpnext_image,
+        MARIADB_IMAGE=mariadb_image,
+        REDIS_IMAGE=redis_image,
+    )
 
 
-def create_bench(name: str, domain: str) -> Path:
-    ensure_bench_missing(name)
-    bench_dir = _bench_path(name)
+def _validate_create_inputs(name: str, domain: str, config: FMConfig) -> None:
+    ensure_bench_missing(name, config=config)
+    if not validate_domain(domain):
+        raise BenchError(f"Invalid domain format: {domain}")
+    if not docker.docker_available():
+        raise BenchError("Docker is not installed or Docker Compose plugin is unavailable.")
+    if not docker.docker_network_exists(config.docker_network):
+        raise BenchError(f"Docker network '{config.docker_network}' does not exist.")
+
+
+def _save_credentials(bench_dir: Path, domain: str, admin_password: str, db_root_password: str) -> Path:
+    creds = {
+        "site": domain,
+        "admin_password": admin_password,
+        "db_root_password": db_root_password,
+    }
+    creds_path = bench_dir / ".credentials.json"
+    creds_path.write_text(json.dumps(creds, indent=2), encoding="utf-8")
+    creds_path.chmod(0o600)
+    return creds_path
+
+
+def wait_for_service(host: str, port: int, timeout: int = 120) -> None:
+    docker.wait_for_service(host=host, port=port, timeout=timeout)
+
+
+def _wait_for_dependencies(bench_dir: Path, timeout: int = 120) -> None:
+    docker.wait_for_service_in_backend(bench_dir, "db", 3306, timeout=timeout)
+    docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=timeout)
+
+
+def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tuple[Path, str, Path]:
+    cfg = config or load_config()
+    _validate_create_inputs(name=name, domain=domain, config=cfg)
+
+    db_root_password = cfg.db_root_password or generate_secure_password()
+    admin_password = cfg.admin_password or generate_secure_password()
+
+    bench_dir = get_bench_path(name, config=cfg)
+    cfg.benches_dir.mkdir(parents=True, exist_ok=True)
     bench_dir.mkdir(parents=True, exist_ok=False)
 
-    compose_content = _render_compose(name=name, domain=domain, site_name=domain)
+    compose_content = _render_compose(
+        name=name,
+        domain=domain,
+        site_name=domain,
+        db_root_password=db_root_password,
+        docker_network=cfg.docker_network,
+        certresolver=cfg.certresolver,
+        erpnext_image=cfg.erpnext_image,
+        mariadb_image=cfg.mariadb_image,
+        redis_image=cfg.redis_image,
+    )
     compose_path = bench_dir / COMPOSE_FILE_NAME
     compose_path.write_text(compose_content, encoding="utf-8")
 
-    docker.compose_up(bench_dir)
-    docker.wait_for_services()
-    docker.exec_in_backend(
-        bench_dir,
-        f"bench new-site {domain} --admin-password=admin --db-root-password=admin",
-    )
-    docker.exec_in_backend(bench_dir, f"bench --site {domain} install-app erpnext")
-    return bench_dir
+    try:
+        docker.compose_up(bench_dir)
+        _wait_for_dependencies(bench_dir, timeout=120)
+        docker.exec_in_backend(
+            bench_dir,
+            f"bench new-site {domain} --admin-password='{admin_password}' --db-root-password='{db_root_password}'",
+        )
+        docker.exec_in_backend(bench_dir, f"bench --site {domain} install-app erpnext")
+        creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
+        LOGGER.info("Bench created: %s", name)
+        return bench_dir, admin_password, creds_path
+    except Exception as exc:
+        LOGGER.error("Create failed for %s. Rolling back resources.", name)
+        try:
+            docker.compose_down(bench_dir, remove_volumes=True)
+        except Exception as down_exc:  # noqa: BLE001
+            LOGGER.warning("Rollback docker down failed: %s", down_exc)
+        shutil.rmtree(bench_dir, ignore_errors=True)
+        raise BenchError(f"Bench creation failed and rollback completed: {exc}") from exc
 
 
-def start_bench(name: str) -> None:
-    bench_dir = ensure_bench_exists(name)
+def start_bench(name: str, config: FMConfig | None = None) -> None:
+    bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_start(bench_dir)
 
 
-def stop_bench(name: str) -> None:
-    bench_dir = ensure_bench_exists(name)
+def stop_bench(name: str, config: FMConfig | None = None) -> None:
+    bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_stop(bench_dir)
 
 
-def restart_bench(name: str) -> None:
-    bench_dir = ensure_bench_exists(name)
+def restart_bench(name: str, config: FMConfig | None = None) -> None:
+    bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_restart(bench_dir)
 
 
-def delete_bench(name: str) -> None:
-    bench_dir = ensure_bench_exists(name)
-    docker.compose_down(bench_dir)
+def delete_bench(name: str, config: FMConfig | None = None) -> None:
+    bench_dir = ensure_bench_exists(name, config=config)
+    docker.compose_down(bench_dir, remove_volumes=True)
     shutil.rmtree(bench_dir)
 
 
-def list_benches() -> list[str]:
-    if not BENCHES_DIR.exists():
-        return []
-    return sorted(path.name for path in BENCHES_DIR.iterdir() if path.is_dir())
+def _bench_domain_from_compose(bench_dir: Path) -> str:
+    compose_path = bench_dir / COMPOSE_FILE_NAME
+    if not compose_path.exists():
+        return "-"
+    for line in compose_path.read_text(encoding="utf-8").splitlines():
+        if "traefik.http.routers." in line and ".rule=Host(" in line:
+            start = line.find("Host(`")
+            if start != -1:
+                end = line.find("`)", start)
+                if end != -1:
+                    return line[start + len("Host(`") : end]
+    return "-"
 
 
-def bench_logs(name: str, service: str | None = None, lines: int = 100) -> str:
-    bench_dir = ensure_bench_exists(name)
+def list_benches(config: FMConfig | None = None) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for bench_path in get_all_benches(config=config):
+        status = "unknown"
+        try:
+            services = docker.compose_ps_json(bench_path)
+            if not services:
+                status = "stopped"
+            elif all("running" in (item.get("State") or "").lower() for item in services):
+                status = "running"
+            else:
+                status = "degraded"
+        except Exception:
+            status = "error"
+        rows.append(
+            {
+                "name": bench_path.name,
+                "status": status,
+                "domain": _bench_domain_from_compose(bench_path),
+            }
+        )
+    return rows
+
+
+def bench_logs(name: str, service: str | None = None, lines: int = 100, follow: bool = True, config: FMConfig | None = None) -> str | None:
+    bench_dir = ensure_bench_exists(name, config=config)
+    if follow:
+        docker.compose_logs_follow(bench_dir, service=service)
+        return None
     return docker.compose_logs(bench_dir, service=service, lines=lines)
 
 
-def bench_health(name: str) -> str:
-    bench_dir = ensure_bench_exists(name)
+def bench_health(name: str, config: FMConfig | None = None) -> str:
+    bench_dir = ensure_bench_exists(name, config=config)
     return docker.compose_ps(bench_dir)
 
 
-def open_bench_shell(name: str) -> None:
-    bench_dir = ensure_bench_exists(name)
+def bench_status(name: str, config: FMConfig | None = None) -> dict:
+    bench_dir = ensure_bench_exists(name, config=config)
+    services = docker.compose_ps_json(bench_dir)
+    running = sum(1 for item in services if "running" in (item.get("State") or "").lower())
+    total = len(services)
+    return {
+        "name": name,
+        "domain": _bench_domain_from_compose(bench_dir),
+        "running": str(running),
+        "total": str(total),
+        "raw_ps": docker.compose_ps(bench_dir),
+    }
+
+
+def _format_bytes(value: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{value} B"
+
+
+def _dir_size_bytes(path: Path) -> int:
+    total = 0
+    if not path.exists():
+        return 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            try:
+                total += item.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str, str]:
+    health = {
+        "backend:8000": "not reachable",
+        "db:3306": "not reachable",
+        "redis:6379": "not reachable",
+    }
+    if not backend_running:
+        return health
+
+    script = """python - <<'PY'
+import json
+import socket
+
+checks = {"backend:8000": ("backend", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+result = {}
+for key, (host, port) in checks.items():
+    try:
+        socket.create_connection((host, port), timeout=2).close()
+        result[key] = "healthy"
+    except OSError:
+        result[key] = "not reachable"
+
+print(json.dumps(result))
+PY"""
+    try:
+        raw = docker.exec_in_backend_output(bench_dir, script).strip()
+        if raw:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                for key in health:
+                    if key in parsed:
+                        health[key] = str(parsed[key])
+    except Exception:
+        pass
+    return health
+
+
+def _try_list_apps(bench_dir: Path, domain: str, backend_running: bool) -> list[str]:
+    if not backend_running or not domain or domain == "-":
+        return []
+    try:
+        output = docker.exec_in_backend_output(bench_dir, f"bench --site {domain} list-apps")
+    except Exception:
+        return []
+    apps = [line.strip() for line in output.splitlines() if line.strip()]
+    return apps
+
+
+def _volume_usage(project_name: str) -> dict[str, str]:
+    usage: dict[str, str] = {}
+    for volume in ["db-data", "sites", "logs"]:
+        docker_volume = f"{project_name}_{volume}"
+        mountpoint = docker.docker_volume_mountpoint(docker_volume)
+        if mountpoint is None or not mountpoint.exists():
+            usage[volume] = "n/a"
+            continue
+        usage[volume] = _format_bytes(_dir_size_bytes(mountpoint))
+    return usage
+
+
+def get_bench_info(name: str, config: FMConfig | None = None) -> dict:
+    bench_dir = ensure_bench_exists(name, config=config)
+    domain = _bench_domain_from_compose(bench_dir)
+
+    info: dict = {
+        "name": name,
+        "path": str(bench_dir),
+        "domain": domain,
+        "status": "stopped",
+        "docker_available": docker.docker_available(),
+        "dns": {"resolved": False, "address": "-", "reachable": False},
+        "containers": [],
+        "services_health": {
+            "backend:8000": "not reachable",
+            "db:3306": "not reachable",
+            "redis:6379": "not reachable",
+        },
+        "apps": [],
+        "disk_usage": {
+            "bench": _format_bytes(_dir_size_bytes(bench_dir)),
+            "volumes": {},
+        },
+        "raw_ps": "",
+    }
+
+    if domain and domain != "-":
+        try:
+            resolved_ip = socket.gethostbyname(domain)
+            info["dns"] = {"resolved": True, "address": resolved_ip, "reachable": False}
+            try:
+                with socket.create_connection((domain, 443), timeout=2):
+                    info["dns"]["reachable"] = True
+            except OSError:
+                info["dns"]["reachable"] = False
+        except OSError:
+            pass
+
+    if not info["docker_available"]:
+        return info
+
+    try:
+        containers = docker.compose_ps_json(bench_dir)
+        info["containers"] = containers
+        info["raw_ps"] = docker.compose_ps(bench_dir)
+        if not containers:
+            info["status"] = "stopped"
+            return info
+        if all("running" in (item.get("State") or "").lower() for item in containers):
+            info["status"] = "running"
+        else:
+            info["status"] = "degraded"
+
+        backend_running = any(
+            (item.get("Service") == "backend" and "running" in (item.get("State") or "").lower())
+            for item in containers
+        )
+        info["services_health"] = _collect_service_health(bench_dir, backend_running=backend_running)
+        info["apps"] = _try_list_apps(bench_dir, domain=domain, backend_running=backend_running)
+        info["disk_usage"]["volumes"] = _volume_usage(project_name=bench_dir.name)
+        return info
+    except Exception:
+        info["status"] = "error"
+        return info
+
+
+def open_bench_shell(name: str, config: FMConfig | None = None) -> None:
+    bench_dir = ensure_bench_exists(name, config=config)
     try:
         docker.exec_backend_interactive(bench_dir, ["bash"])
     except docker.DockerCommandError:
         docker.exec_backend_interactive(bench_dir, ["sh"])
 
 
-def open_site_console(name: str, site: str) -> None:
-    bench_dir = ensure_bench_exists(name)
+def open_site_console(name: str, site: str, config: FMConfig | None = None) -> None:
+    bench_dir = ensure_bench_exists(name, config=config)
     docker.exec_backend_interactive(bench_dir, ["bash", "-lc", f"bench --site {site} console"])
