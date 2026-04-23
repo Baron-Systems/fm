@@ -117,6 +117,21 @@ def _save_credentials(bench_dir: Path, domain: str, admin_password: str, db_root
     return creds_path
 
 
+def _load_bench_credentials(bench_dir: Path) -> dict[str, str] | None:
+    creds_path = bench_dir / ".credentials.json"
+    if not creds_path.is_file():
+        return None
+    try:
+        data = json.loads(creds_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return {
+        "site": str(data.get("site") or ""),
+        "admin_password": str(data.get("admin_password") or ""),
+        "db_root_password": str(data.get("db_root_password") or ""),
+    }
+
+
 def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
     return docker.wait_for_service(host=host, port=port, timeout=timeout)
 
@@ -389,6 +404,7 @@ def get_bench_info(name: str, config: FMConfig | None = None) -> dict:
         },
         "raw_ps": "",
     }
+    info["credentials"] = _load_bench_credentials(bench_dir)
 
     if domain and domain != "-":
         try:

@@ -195,6 +195,26 @@ def info(name: str | None = typer.Argument(None, help="Bench name (optional in i
             )
         )
 
+        creds = details.get("credentials")
+        if creds:
+            console.print(
+                Panel.fit(
+                    f"Site: [bold]{creds['site']}[/bold]\n"
+                    f"Admin password: [bold]{creds['admin_password']}[/bold]\n"
+                    f"DB root password: [bold]{creds['db_root_password']}[/bold]",
+                    title="Credentials",
+                    border_style="yellow",
+                )
+            )
+        else:
+            console.print(
+                Panel.fit(
+                    "[yellow]No .credentials.json found (or file is unreadable).[/yellow]",
+                    title="Credentials",
+                    border_style="yellow",
+                )
+            )
+
         dns = details["dns"]
         console.print(
             Panel.fit(
