@@ -1,0 +1,78 @@
+services:
+  db:
+    image: mariadb:10.6
+    container_name: {{ NAME }}-db
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MARIADB_ROOT_PASSWORD: admin
+    volumes:
+      - db-data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: {{ NAME }}-redis
+    restart: unless-stopped
+
+  backend:
+    image: frappe/erpnext:v16
+    container_name: {{ NAME }}-backend
+    depends_on:
+      - db
+      - redis
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis://redis:6379
+      REDIS_QUEUE: redis://redis:6379
+      REDIS_SOCKETIO: redis://redis:6379
+      SITE_NAME: {{ SITE_NAME }}
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    restart: unless-stopped
+
+  websocket:
+    image: frappe/erpnext:v16
+    container_name: {{ NAME }}-websocket
+    depends_on:
+      - backend
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    restart: unless-stopped
+
+  frontend:
+    image: frappe/erpnext:v16
+    container_name: {{ NAME }}-frontend
+    depends_on:
+      - backend
+      - websocket
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      FRAPPE_SITE_NAME_HEADER: {{ SITE_NAME }}
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: 50m
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
+      - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
+      - "traefik.http.routers.{{ NAME }}.tls.certresolver=le"
+      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  sites:
+  logs:

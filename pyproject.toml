@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "frappe-mini-manager"
+version = "0.1.0"
+description = "Mini Frappe Manager CLI for multi-bench ERPNext Docker deployments"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Your Name" }
+]
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.1",
+  "jinja2>=3.1.4"
+]
+
+[project.urls]
+Homepage = "https://github.com/<user>/<repo>"
+Repository = "https://github.com/<user>/<repo>"
+
+[project.scripts]
+fm = "fm.cli:app"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["fm*"]
+
+[tool.setuptools.package-data]
+fm = ["templates/*.j2"]
