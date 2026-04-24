@@ -281,11 +281,12 @@ def info(name: str | None = typer.Argument(None, help="Bench name (optional in i
 
 @app.command("shell")
 def shell(
-    name: str,
+    name: str | None = typer.Argument(None, help="Bench name (optional in interactive mode)"),
     site: str | None = typer.Option(None, "--site", help="Open bench console for a specific site"),
 ) -> None:
     """Open interactive shell in backend container or site console."""
     try:
+        name = _resolve_bench_name(name)
         if site:
             console.print(f"[cyan]Opening bench console for site[/cyan] [bold]{site}[/bold]")
             core.open_site_console(name=name, site=site, config=config)
