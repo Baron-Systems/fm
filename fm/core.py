@@ -28,6 +28,14 @@ class BenchError(RuntimeError):
 LOGGER = logging.getLogger("fm")
 
 
+def _escape_compose_env(value: str) -> str:
+    """
+    Escape `$` for docker compose interpolation rules.
+    Compose treats `$VAR` as environment interpolation unless escaped as `$$`.
+    """
+    return value.replace("$", "$$")
+
+
 def get_bench_path(name: str, config: FMConfig | None = None) -> Path:
     state_bench = state_get_bench(name)
     if state_bench and state_bench.get("path"):
@@ -167,7 +175,7 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         name=name,
         domain=domain,
         site_name=domain,
-        db_root_password=db_root_password,
+        db_root_password=_escape_compose_env(db_root_password),
         docker_network=cfg.docker_network,
         certresolver=cfg.certresolver,
         erpnext_image=cfg.erpnext_image,
