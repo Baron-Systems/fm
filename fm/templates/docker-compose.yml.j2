@@ -8,8 +8,8 @@ services:
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed
     environment:
-      MYSQL_ROOT_PASSWORD: {{ DB_ROOT_PASSWORD }}
-      MARIADB_ROOT_PASSWORD: {{ DB_ROOT_PASSWORD }}
+      MYSQL_ROOT_PASSWORD: "{{ DB_ROOT_PASSWORD }}"
+      MARIADB_ROOT_PASSWORD: "{{ DB_ROOT_PASSWORD }}"
     volumes:
       - db-data:/var/lib/mysql
     restart: unless-stopped
