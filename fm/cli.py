@@ -56,6 +56,12 @@ def create(name: str, domain: str) -> None:
         _handle_error(exc)
 
 
+@app.command("hello")
+def hello() -> None:
+    """Print a welcome message."""
+    console.print("Welcome to fm tool, Mr. Mohammed Taradeh.")
+
+
 @app.command("start")
 def start(name: str | None = typer.Argument(None, help="Bench name (optional in interactive mode)")) -> None:
     """Start a bench."""

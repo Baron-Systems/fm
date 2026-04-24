@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import socket
 import shutil
 from pathlib import Path
@@ -101,8 +102,9 @@ def _validate_create_inputs(name: str, domain: str, config: FMConfig) -> None:
         raise BenchError(f"Invalid domain format: {domain}")
     if not docker.docker_available():
         raise BenchError("Docker is not installed or Docker Compose plugin is unavailable.")
-    if not docker.docker_network_exists(config.docker_network):
-        raise BenchError(f"Docker network '{config.docker_network}' does not exist.")
+    created = docker.ensure_docker_network(config.docker_network)
+    if created:
+        LOGGER.info("Docker network '%s' was missing and has been created.", config.docker_network)
 
 
 def _save_credentials(bench_dir: Path, domain: str, admin_password: str, db_root_password: str) -> Path:
@@ -178,11 +180,25 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
     try:
         docker.compose_up(bench_dir)
         _wait_for_dependencies(bench_dir, timeout=120)
+        # Ensure site creation uses the MariaDB service container, not localhost.
+        docker.exec_in_backend(bench_dir, "bench set-config -g db_host db")
+        docker.exec_in_backend(bench_dir, "bench set-config -g db_port 3306")
         docker.exec_in_backend(
             bench_dir,
-            f"bench new-site {domain} --admin-password='{admin_password}' --db-root-password='{db_root_password}'",
+            " ".join(
+                [
+                    "bench",
+                    "new-site",
+                    shlex.quote(domain),
+                    f"--admin-password={shlex.quote(admin_password)}",
+                    f"--db-root-password={shlex.quote(db_root_password)}",
+                ]
+            ),
         )
-        docker.exec_in_backend(bench_dir, f"bench --site {domain} install-app erpnext")
+        docker.exec_in_backend(
+            bench_dir,
+            " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
+        )
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,

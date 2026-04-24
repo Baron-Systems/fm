@@ -182,6 +182,17 @@ def docker_network_exists(network_name: str) -> bool:
         return False
 
 
+def ensure_docker_network(network_name: str) -> bool:
+    """
+    Ensure Docker network exists.
+    Returns True when the network was created, False when it already existed.
+    """
+    if docker_network_exists(network_name):
+        return False
+    run_docker(["docker", "network", "create", network_name])
+    return True
+
+
 def docker_volume_mountpoint(volume_name: str) -> Path | None:
     try:
         result = run_docker(
