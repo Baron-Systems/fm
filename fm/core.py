@@ -191,6 +191,10 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         # Ensure site creation uses the MariaDB service container, not localhost.
         docker.exec_in_backend(bench_dir, "bench set-config -g db_host db")
         docker.exec_in_backend(bench_dir, "bench set-config -g db_port 3306")
+        # Ensure Frappe uses Redis service in the compose network.
+        docker.exec_in_backend(bench_dir, "bench set-config -g redis_cache redis://redis:6379")
+        docker.exec_in_backend(bench_dir, "bench set-config -g redis_queue redis://redis:6379")
+        docker.exec_in_backend(bench_dir, "bench set-config -g redis_socketio redis://redis:6379")
         docker.exec_in_backend(
             bench_dir,
             " ".join(
