@@ -12,7 +12,6 @@ import yaml
 
 from .config import FMConfig, load_config
 from . import docker
-from . import proxy
 from .state import get_all_benches as state_get_all_benches
 from .state import get_bench as state_get_bench
 from .state import remove_bench as state_remove_bench
@@ -289,13 +288,6 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         state_remove_bench(name)
         raise BenchError(f"Bench creation failed and rollback completed: {exc}") from exc
 
-    # Optional post-processing: Proxy configuration (non-blocking)
-    proxy_conf_path: Path | None = None
-    try:
-        proxy_conf_path = proxy.add_bench_to_proxy(name, domain, cfg)
-    except Exception as proxy_exc:  # noqa: BLE001
-        LOGGER.warning("Proxy configuration failed (non-blocking): %s", proxy_exc)
-
     return bench_dir, admin_password, creds_path
 
 
@@ -320,11 +312,6 @@ def restart_bench(name: str, config: FMConfig | None = None) -> None:
 def delete_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_down(bench_dir, remove_volumes=True)
-    cfg = config or load_config()
-    try:
-        proxy.remove_bench_from_proxy(name, cfg)
-    except Exception as exc:  # noqa: BLE001
-        LOGGER.warning("Failed to remove proxy config for %s: %s", name, exc)
     shutil.rmtree(bench_dir)
     state_remove_bench(name)
 

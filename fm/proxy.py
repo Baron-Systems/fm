@@ -60,15 +60,24 @@ def get_proxy_config_path(bench_name: str, config: FMConfig) -> Path:
 
 
 def is_nginx_available(config: FMConfig) -> bool:
-    """Check if nginx is available either as host binary or Docker container."""
-    # Check if nginx binary is available
-    result = _safe_run_command([config.nginx_bin, "-v"], check=False, capture=True)
-    if result is not None and result.returncode == 0:
-        return True
-
+    """
+    Check if nginx is available via Docker container.
+    
+    This function only checks for Docker-based nginx to avoid host binary dependencies.
+    This ensures fm create works in Docker-only environments without host nginx.
+    """
     # Check if nginx is running in Docker
     result = _safe_run_command(
         ["docker", "ps", "--filter", "name=nginx", "--format", "{{.Names}}"],
+        check=False,
+        capture=True,
+    )
+    if result is not None and result.stdout and result.stdout.strip():
+        return True
+
+    # Check if nginx container exists (even if not running)
+    result = _safe_run_command(
+        ["docker", "ps", "-a", "--filter", "name=nginx", "--format", "{{.Names}}"],
         check=False,
         capture=True,
     )
