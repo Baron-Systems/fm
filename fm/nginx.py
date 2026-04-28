@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -11,10 +12,42 @@ from .config import FMConfig
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 NGINX_INCLUDE_LINE = "include /etc/nginx/conf.d/*.conf;"
+LOGGER = logging.getLogger("fm")
 
 
 class NginxConfigError(RuntimeError):
     """Raised when NGINX config generation or reload fails."""
+
+
+def is_nginx_available(config: FMConfig) -> bool:
+    """Check if nginx is available either as host binary or Docker container."""
+    # Check if nginx binary is available
+    try:
+        subprocess.run(
+            [config.nginx_bin, "-v"],
+            text=True,
+            check=True,
+            capture_output=True,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    # Check if nginx is running in Docker
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=nginx", "--format", "{{.Names}}"],
+            text=True,
+            check=True,
+            capture_output=True,
+        )
+        if result.stdout.strip():
+            return True
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    return False
 
 
 def _run_nginx_command(config: FMConfig, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -52,12 +85,17 @@ def nginx_conf_path(bench_name: str, config: FMConfig) -> Path:
 
 
 def ensure_main_nginx_include(config: FMConfig) -> bool:
+    """Ensure nginx main config includes the conf.d directory. Returns True if modified, False otherwise."""
     if not config.nginx_ensure_main_include:
         return False
 
     main_config_path = config.nginx_main_config
     if not main_config_path.exists():
-        raise NginxConfigError(f"Main nginx config not found: {main_config_path}")
+        LOGGER.warning(
+            "NGINX main config not found at %s. Skipping reverse proxy configuration.",
+            main_config_path,
+        )
+        return False
 
     content = main_config_path.read_text(encoding="utf-8")
     if NGINX_INCLUDE_LINE in content:
@@ -92,9 +130,22 @@ def reload_nginx(config: FMConfig) -> None:
 
 
 def configure_bench_nginx(bench_name: str, domain: str, config: FMConfig) -> Path | None:
+    """Configure nginx for a bench. Returns config path if successful, None if skipped or failed."""
+    # Skip if nginx integration is disabled
+    if not config.nginx_integration_enabled:
+        LOGGER.info("NGINX integration disabled, skipping reverse proxy configuration")
+        return None
+
+    # Skip if nginx is not enabled
     if not config.nginx_enabled:
         return None
 
+    # Check if nginx is available (host binary or Docker container)
+    if not is_nginx_available(config):
+        LOGGER.warning("NGINX not available, skipping reverse proxy configuration step")
+        return None
+
+    # Ensure main config includes conf.d directory (non-blocking)
     ensure_main_nginx_include(config)
     conf_path = write_bench_nginx_config(bench_name=bench_name, domain=domain, config=config)
 
@@ -102,13 +153,15 @@ def configure_bench_nginx(bench_name: str, domain: str, config: FMConfig) -> Pat
         try:
             validate_nginx_config(config)
             reload_nginx(config)
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("NGINX validation/reload failed: %s", exc)
             try:
                 if conf_path.exists():
                     conf_path.unlink()
             except OSError:
                 pass
-            raise
+            # Return None to indicate nginx config failed but don't raise
+            return None
 
     return conf_path
 

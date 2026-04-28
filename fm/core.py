@@ -242,7 +242,6 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
     )
     compose_path = bench_dir / COMPOSE_FILE_NAME
     compose_path.write_text(compose_content, encoding="utf-8")
-    nginx_conf_path: Path | None = None
 
     try:
         docker.compose_up(bench_dir)
@@ -270,7 +269,6 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
         )
-        nginx_conf_path = nginx.configure_bench_nginx(name, domain, cfg)
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,
@@ -281,14 +279,8 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             },
         )
         LOGGER.info("Bench created: %s", name)
-        return bench_dir, admin_password, creds_path
     except Exception as exc:
         LOGGER.error("Create failed for %s. Rolling back resources.", name)
-        if nginx_conf_path is not None:
-            try:
-                nginx.remove_bench_nginx_config(name, cfg)
-            except Exception as nginx_exc:  # noqa: BLE001
-                LOGGER.warning("Rollback nginx cleanup failed: %s", nginx_exc)
         try:
             docker.compose_down(bench_dir, remove_volumes=True)
         except Exception as down_exc:  # noqa: BLE001
@@ -296,6 +288,15 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         shutil.rmtree(bench_dir, ignore_errors=True)
         state_remove_bench(name)
         raise BenchError(f"Bench creation failed and rollback completed: {exc}") from exc
+
+    # Optional post-processing: NGINX configuration (non-blocking)
+    nginx_conf_path: Path | None = None
+    try:
+        nginx_conf_path = nginx.configure_bench_nginx(name, domain, cfg)
+    except Exception as nginx_exc:  # noqa: BLE001
+        LOGGER.warning("NGINX configuration failed (non-blocking): %s", nginx_exc)
+
+    return bench_dir, admin_password, creds_path
 
 
 def start_bench(name: str, config: FMConfig | None = None) -> None:
