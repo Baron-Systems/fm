@@ -19,6 +19,23 @@ class ProxyError(RuntimeError):
     """Raised when proxy operations fail."""
 
 
+def _safe_run_command(cmd: list[str], check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str] | None:
+    """
+    Safely run a subprocess command with proper error handling.
+    
+    Returns CompletedProcess on success, None on failure.
+    Never raises exceptions - logs warnings instead.
+    """
+    try:
+        if capture:
+            return subprocess.run(cmd, text=True, check=check, capture_output=True)
+        else:
+            return subprocess.run(cmd, text=True, check=check)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        LOGGER.warning("Proxy command failed: %s - %s", " ".join(cmd), exc)
+        return None
+
+
 def _render_nginx_server_block(bench_name: str, domain: str) -> str:
     """Render nginx server block configuration for a bench."""
     env = Environment(
@@ -45,56 +62,53 @@ def get_proxy_config_path(bench_name: str, config: FMConfig) -> Path:
 def is_nginx_available(config: FMConfig) -> bool:
     """Check if nginx is available either as host binary or Docker container."""
     # Check if nginx binary is available
-    try:
-        subprocess.run(
-            [config.nginx_bin, "-v"],
-            text=True,
-            check=True,
-            capture_output=True,
-            stderr=subprocess.DEVNULL,
-        )
+    result = _safe_run_command([config.nginx_bin, "-v"], check=False, capture=True)
+    if result is not None and result.returncode == 0:
         return True
-    except (OSError, subprocess.CalledProcessError):
-        pass
 
     # Check if nginx is running in Docker
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "--filter", "name=nginx", "--format", "{{.Names}}"],
-            text=True,
-            check=True,
-            capture_output=True,
-        )
-        if result.stdout.strip():
-            return True
-    except (OSError, subprocess.CalledProcessError):
-        pass
+    result = _safe_run_command(
+        ["docker", "ps", "--filter", "name=nginx", "--format", "{{.Names}}"],
+        check=False,
+        capture=True,
+    )
+    if result is not None and result.stdout and result.stdout.strip():
+        return True
 
     return False
 
 
-def _run_nginx_command(config: FMConfig, args: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run an nginx command and handle errors."""
+def _run_nginx_command(config: FMConfig, args: list[str]) -> bool:
+    """
+    Run an nginx command and handle errors safely.
+    
+    Returns True if successful, False otherwise.
+    Never raises exceptions - logs warnings instead.
+    """
     cmd = [config.nginx_bin, *args]
-    try:
-        return subprocess.run(cmd, text=True, check=True, capture_output=True)
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
-        details = stderr or stdout or "Unknown nginx error"
-        raise ProxyError(f"Failed command: {' '.join(cmd)}\n{details}") from exc
-    except OSError as exc:
-        raise ProxyError(f"Failed to execute {' '.join(cmd)}: {exc}") from exc
+    result = _safe_run_command(cmd, check=True, capture=True)
+    if result is None:
+        LOGGER.warning("NGINX command failed: %s", " ".join(cmd))
+        return False
+    return True
 
 
-def validate_nginx_config(config: FMConfig) -> None:
-    """Validate nginx configuration."""
-    _run_nginx_command(config, ["-t"])
+def validate_nginx_config(config: FMConfig) -> bool:
+    """
+    Validate nginx configuration.
+    
+    Returns True if successful, False otherwise.
+    """
+    return _run_nginx_command(config, ["-t"])
 
 
-def reload_nginx(config: FMConfig) -> None:
-    """Reload nginx configuration."""
-    _run_nginx_command(config, ["-s", "reload"])
+def reload_nginx(config: FMConfig) -> bool:
+    """
+    Reload nginx configuration.
+    
+    Returns True if successful, False otherwise.
+    """
+    return _run_nginx_command(config, ["-s", "reload"])
 
 
 def ensure_main_nginx_include(config: FMConfig) -> bool:
@@ -153,12 +167,10 @@ def init_proxy(config: FMConfig) -> bool:
 
     # Validate nginx config
     if config.nginx_validate_and_reload:
-        try:
-            validate_nginx_config(config)
-            LOGGER.info("NGINX configuration validated successfully")
-        except Exception as exc:
-            LOGGER.warning("NGINX validation failed: %s", exc)
+        if not validate_nginx_config(config):
+            LOGGER.warning("NGINX validation failed")
             return False
+        LOGGER.info("NGINX configuration validated successfully")
 
     LOGGER.info("Proxy layer initialized successfully")
     return True
@@ -194,13 +206,13 @@ def add_bench_to_proxy(bench_name: str, domain: str, config: FMConfig) -> bool:
 
     # Validate and reload nginx
     if config.nginx_validate_and_reload:
-        try:
-            validate_nginx_config(config)
-            reload_nginx(config)
-            LOGGER.info("NGINX validated and reloaded successfully")
-        except Exception as exc:
-            LOGGER.warning("NGINX validation/reload failed: %s", exc)
+        if not validate_nginx_config(config):
+            LOGGER.warning("NGINX validation failed")
             return False
+        if not reload_nginx(config):
+            LOGGER.warning("NGINX reload failed")
+            return False
+        LOGGER.info("NGINX validated and reloaded successfully")
 
     return True
 
@@ -223,9 +235,12 @@ def remove_bench_from_proxy(bench_name: str, config: FMConfig) -> bool:
         LOGGER.info("Removed proxy config for bench '%s'", bench_name)
 
         if config.nginx_validate_and_reload:
-            validate_nginx_config(config)
-            reload_nginx(config)
-            LOGGER.info("NGINX validated and reloaded successfully")
+            if not validate_nginx_config(config):
+                LOGGER.warning("NGINX validation failed during bench removal")
+            elif not reload_nginx(config):
+                LOGGER.warning("NGINX reload failed during bench removal")
+            else:
+                LOGGER.info("NGINX validated and reloaded successfully")
         return True
     except Exception as exc:
         LOGGER.warning("Failed to remove bench '%s' from proxy: %s", bench_name, exc)
@@ -289,12 +304,12 @@ def sync_proxy(
 
     # Validate and reload nginx
     if config.nginx_validate_and_reload and any(results.values()):
-        try:
-            validate_nginx_config(config)
-            reload_nginx(config)
+        if not validate_nginx_config(config):
+            LOGGER.warning("NGINX validation failed during sync")
+        elif not reload_nginx(config):
+            LOGGER.warning("NGINX reload failed during sync")
+        else:
             LOGGER.info("NGINX validated and reloaded successfully")
-        except Exception as exc:
-            LOGGER.warning("NGINX validation/reload failed: %s", exc)
 
     return results
 
