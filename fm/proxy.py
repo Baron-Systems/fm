@@ -49,7 +49,7 @@ def _render_nginx_server_block(bench_name: str, domain: str) -> str:
     return template.render(
         BENCH_NAME=bench_name,
         DOMAIN=domain,
-        FRONTEND_UPSTREAM=f"{bench_name}-frontend:80",
+        FRONTEND_UPSTREAM=f"{bench_name}-frontend:8080",
         WEBSOCKET_UPSTREAM=f"{bench_name}-websocket:9000",
     ).strip() + "\n"
 
