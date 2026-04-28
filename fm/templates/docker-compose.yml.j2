@@ -70,17 +70,9 @@ services:
       - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
       - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
       - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8080"
-    networks:
-      - default
-      - edge
     restart: unless-stopped
 
 volumes:
   db-data:
   sites:
   logs:
-
-networks:
-  edge:
-    external: true
-    name: {{ DOCKER_NETWORK }}

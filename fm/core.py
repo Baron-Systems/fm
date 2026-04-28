@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+import yaml
 
 from .config import FMConfig, load_config
 from . import docker
@@ -19,6 +20,7 @@ from .utils import generate_secure_password, validate_domain
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 COMPOSE_FILE_NAME = "docker-compose.yml"
+SHARED_WEB_NETWORK = "web"
 
 
 class BenchError(RuntimeError):
@@ -77,7 +79,6 @@ def _render_compose(
     domain: str,
     site_name: str,
     db_root_password: str,
-    docker_network: str,
     certresolver: str,
     erpnext_image: str,
     mariadb_image: str,
@@ -96,12 +97,64 @@ def _render_compose(
         DOMAIN=domain,
         SITE_NAME=site_name,
         DB_ROOT_PASSWORD=db_root_password,
-        DOCKER_NETWORK=docker_network,
         CERTRESOLVER=certresolver,
         ERPNEXT_IMAGE=erpnext_image,
         MARIADB_IMAGE=mariadb_image,
         REDIS_IMAGE=redis_image,
     )
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _normalize_service_networks(networks: object, shared_network: str) -> list[str] | dict[str, dict]:
+    if isinstance(networks, dict):
+        normalized = dict(networks)
+        normalized.setdefault("default", {})
+        normalized.setdefault(shared_network, {})
+        return normalized
+
+    normalized_list: list[str] = []
+    if isinstance(networks, list):
+        normalized_list.extend(str(item) for item in networks if isinstance(item, (str, int, float)))
+    elif isinstance(networks, str):
+        normalized_list.append(networks)
+
+    normalized_list.extend(["default", shared_network])
+    return _dedupe_preserve_order(normalized_list)
+
+
+def _ensure_shared_web_network(compose_content: str, enabled: bool = True) -> str:
+    compose_data = yaml.safe_load(compose_content) or {}
+    if not isinstance(compose_data, dict):
+        raise BenchError("Generated docker-compose content is invalid.")
+
+    services = compose_data.get("services") or {}
+    if not isinstance(services, dict):
+        raise BenchError("Generated docker-compose services definition is invalid.")
+
+    if enabled:
+        for service in services.values():
+            if isinstance(service, dict):
+                service["networks"] = _normalize_service_networks(service.get("networks"), SHARED_WEB_NETWORK)
+
+        networks = compose_data.get("networks") or {}
+        if not isinstance(networks, dict):
+            networks = {}
+        networks["default"] = {}
+        networks[SHARED_WEB_NETWORK] = {"external": True}
+        compose_data["networks"] = networks
+
+    rendered = yaml.safe_dump(compose_data, sort_keys=False)
+    return rendered.replace("default: {}\n", "default:\n")
 
 
 def _validate_create_inputs(name: str, domain: str, config: FMConfig) -> None:
@@ -110,9 +163,10 @@ def _validate_create_inputs(name: str, domain: str, config: FMConfig) -> None:
         raise BenchError(f"Invalid domain format: {domain}")
     if not docker.docker_available():
         raise BenchError("Docker is not installed or Docker Compose plugin is unavailable.")
-    created = docker.ensure_docker_network(config.docker_network)
-    if created:
-        LOGGER.info("Docker network '%s' was missing and has been created.", config.docker_network)
+    if config.attach_shared_web_network:
+        created = docker.ensure_docker_network(SHARED_WEB_NETWORK)
+        if created:
+            LOGGER.info("Docker network '%s' was missing and has been created.", SHARED_WEB_NETWORK)
 
 
 def _save_credentials(bench_dir: Path, domain: str, admin_password: str, db_root_password: str) -> Path:
@@ -176,11 +230,14 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         domain=domain,
         site_name=domain,
         db_root_password=_escape_compose_env(db_root_password),
-        docker_network=cfg.docker_network,
         certresolver=cfg.certresolver,
         erpnext_image=cfg.erpnext_image,
         mariadb_image=cfg.mariadb_image,
         redis_image=cfg.redis_image,
+    )
+    compose_content = _ensure_shared_web_network(
+        compose_content,
+        enabled=cfg.attach_shared_web_network,
     )
     compose_path = bench_dir / COMPOSE_FILE_NAME
     compose_path.write_text(compose_content, encoding="utf-8")

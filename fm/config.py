@@ -14,6 +14,7 @@ DEFAULT_CONFIG_PATH = Path.home() / ".fm" / "config.yaml"
 class FMConfig:
     benches_dir: Path
     docker_network: str
+    attach_shared_web_network: bool
     certresolver: str
     db_root_password: str
     admin_password: str | None
@@ -27,7 +28,7 @@ class FMConfig:
 def _default_data() -> dict[str, Any]:
     return {
         "paths": {"benches_dir": "benches"},
-        "docker": {"network": "web"},
+        "docker": {"network": "web", "attach_shared_web_network": True},
         "erpnext": {
             "images": {
                 "erpnext": "frappe/erpnext:v16",
@@ -68,6 +69,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> FMConfig:
     return FMConfig(
         benches_dir=benches_dir,
         docker_network=str(data["docker"]["network"]),
+        attach_shared_web_network=bool(data["docker"].get("attach_shared_web_network", True)),
         certresolver=str(data["erpnext"]["certresolver"]),
         db_root_password=str(data["defaults"]["db_root_password"] or ""),
         admin_password=(str(data["defaults"]["admin_password"]) if data["defaults"]["admin_password"] else None),
