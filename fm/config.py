@@ -15,6 +15,12 @@ class FMConfig:
     benches_dir: Path
     docker_network: str
     attach_shared_web_network: bool
+    nginx_enabled: bool
+    nginx_conf_dir: Path
+    nginx_main_config: Path
+    nginx_bin: str
+    nginx_ensure_main_include: bool
+    nginx_validate_and_reload: bool
     certresolver: str
     db_root_password: str
     admin_password: str | None
@@ -29,6 +35,14 @@ def _default_data() -> dict[str, Any]:
     return {
         "paths": {"benches_dir": "benches"},
         "docker": {"network": "web", "attach_shared_web_network": True},
+        "nginx": {
+            "enabled": True,
+            "conf_dir": "/etc/nginx/conf.d",
+            "main_config": "/etc/nginx/nginx.conf",
+            "bin": "nginx",
+            "ensure_main_include": True,
+            "validate_and_reload": True,
+        },
         "erpnext": {
             "images": {
                 "erpnext": "frappe/erpnext:v16",
@@ -70,6 +84,12 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> FMConfig:
         benches_dir=benches_dir,
         docker_network=str(data["docker"]["network"]),
         attach_shared_web_network=bool(data["docker"].get("attach_shared_web_network", True)),
+        nginx_enabled=bool(data["nginx"].get("enabled", True)),
+        nginx_conf_dir=Path(str(data["nginx"].get("conf_dir", "/etc/nginx/conf.d"))).expanduser(),
+        nginx_main_config=Path(str(data["nginx"].get("main_config", "/etc/nginx/nginx.conf"))).expanduser(),
+        nginx_bin=str(data["nginx"].get("bin", "nginx")),
+        nginx_ensure_main_include=bool(data["nginx"].get("ensure_main_include", True)),
+        nginx_validate_and_reload=bool(data["nginx"].get("validate_and_reload", True)),
         certresolver=str(data["erpnext"]["certresolver"]),
         db_root_password=str(data["defaults"]["db_root_password"] or ""),
         admin_password=(str(data["defaults"]["admin_password"]) if data["defaults"]["admin_password"] else None),

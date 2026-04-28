@@ -12,6 +12,7 @@ import yaml
 
 from .config import FMConfig, load_config
 from . import docker
+from . import nginx
 from .state import get_all_benches as state_get_all_benches
 from .state import get_bench as state_get_bench
 from .state import remove_bench as state_remove_bench
@@ -241,6 +242,7 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
     )
     compose_path = bench_dir / COMPOSE_FILE_NAME
     compose_path.write_text(compose_content, encoding="utf-8")
+    nginx_conf_path: Path | None = None
 
     try:
         docker.compose_up(bench_dir)
@@ -268,6 +270,7 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
         )
+        nginx_conf_path = nginx.configure_bench_nginx(name, domain, cfg)
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,
@@ -281,6 +284,11 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         return bench_dir, admin_password, creds_path
     except Exception as exc:
         LOGGER.error("Create failed for %s. Rolling back resources.", name)
+        if nginx_conf_path is not None:
+            try:
+                nginx.remove_bench_nginx_config(name, cfg)
+            except Exception as nginx_exc:  # noqa: BLE001
+                LOGGER.warning("Rollback nginx cleanup failed: %s", nginx_exc)
         try:
             docker.compose_down(bench_dir, remove_volumes=True)
         except Exception as down_exc:  # noqa: BLE001
@@ -311,6 +319,11 @@ def restart_bench(name: str, config: FMConfig | None = None) -> None:
 def delete_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_down(bench_dir, remove_volumes=True)
+    cfg = config or load_config()
+    try:
+        nginx.remove_bench_nginx_config(name, cfg)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Failed to remove nginx config for %s: %s", name, exc)
     shutil.rmtree(bench_dir)
     state_remove_bench(name)
 
