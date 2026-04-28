@@ -81,7 +81,8 @@ def _render_nginx_server_block(bench_name: str, domain: str) -> str:
 
 
 def nginx_conf_path(bench_name: str, config: FMConfig) -> Path:
-    return config.nginx_conf_dir / f"{bench_name}.conf"
+    """Get the path for nginx config in the fm-specific directory."""
+    return config.nginx_fm_conf_dir / f"{bench_name}.conf"
 
 
 def ensure_main_nginx_include(config: FMConfig) -> bool:
@@ -177,3 +178,143 @@ def remove_bench_nginx_config(bench_name: str, config: FMConfig) -> None:
     if config.nginx_validate_and_reload:
         validate_nginx_config(config)
         reload_nginx(config)
+
+
+def enable_proxy(bench_name: str, domain: str, config: FMConfig) -> bool:
+    """Enable reverse proxy for a bench. Returns True if successful, False otherwise."""
+    # Check if nginx is available
+    if not is_nginx_available(config):
+        LOGGER.warning("NGINX not available, cannot enable reverse proxy")
+        return False
+
+    # Create fm nginx config directory
+    config.nginx_fm_conf_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ensure main nginx config includes fm directory
+    fm_include_line = f"include {config.nginx_fm_conf_dir}/*.conf;"
+    main_config_path = config.nginx_main_config
+
+    if main_config_path.exists():
+        content = main_config_path.read_text(encoding="utf-8")
+        if fm_include_line not in content:
+            http_block_pattern = re.compile(r"(^\s*http\s*\{\s*$)", re.MULTILINE)
+            if http_block_pattern.search(content):
+                updated = http_block_pattern.sub(rf"\1\n    {fm_include_line}", content, count=1)
+            else:
+                updated = content.rstrip() + f"\n{fm_include_line}\n"
+            main_config_path.write_text(updated, encoding="utf-8")
+            LOGGER.info("Added fm nginx include to main config")
+    else:
+        LOGGER.warning("Main nginx config not found, skipping include update")
+
+    # Write bench-specific nginx config
+    conf_path = nginx_conf_path(bench_name, config)
+    rendered = _render_nginx_server_block(bench_name=bench_name, domain=domain)
+    conf_path.write_text(rendered, encoding="utf-8")
+    LOGGER.info("Generated nginx config for bench '%s' at %s", bench_name, conf_path)
+
+    # Validate and reload nginx
+    if config.nginx_validate_and_reload:
+        try:
+            validate_nginx_config(config)
+            reload_nginx(config)
+            LOGGER.info("NGINX validated and reloaded successfully")
+        except Exception as exc:
+            LOGGER.warning("NGINX validation/reload failed: %s", exc)
+            return False
+
+    return True
+
+
+def disable_proxy(bench_name: str, config: FMConfig) -> bool:
+    """Disable reverse proxy for a bench. Returns True if successful, False otherwise."""
+    conf_path = nginx_conf_path(bench_name, config)
+    if not conf_path.exists():
+        LOGGER.info("No nginx config found for bench '%s'", bench_name)
+        return True
+
+    try:
+        conf_path.unlink()
+        LOGGER.info("Removed nginx config for bench '%s'", bench_name)
+
+        if config.nginx_validate_and_reload:
+            validate_nginx_config(config)
+            reload_nginx(config)
+            LOGGER.info("NGINX validated and reloaded successfully")
+        return True
+    except Exception as exc:
+        LOGGER.warning("Failed to disable proxy for bench '%s': %s", bench_name, exc)
+        return False
+
+
+def sync_proxy(get_all_benches_func, get_bench_func, config: FMConfig) -> dict[str, bool]:
+    """Sync proxy configurations for all benches. Returns dict of bench_name -> success."""
+    results: dict[str, bool] = {}
+
+    # Check if nginx is available
+    if not is_nginx_available(config):
+        LOGGER.warning("NGINX not available, skipping proxy sync")
+        return results
+
+    # Get all benches
+    bench_names = get_all_benches_func(config=config)
+    if not bench_names:
+        LOGGER.info("No benches found, nothing to sync")
+        return results
+
+    LOGGER.info("Syncing proxy configurations for %d benches", len(bench_names))
+
+    # Create fm nginx config directory
+    config.nginx_fm_conf_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ensure main nginx config includes fm directory
+    fm_include_line = f"include {config.nginx_fm_conf_dir}/*.conf;"
+    main_config_path = config.nginx_main_config
+
+    if main_config_path.exists():
+        content = main_config_path.read_text(encoding="utf-8")
+        if fm_include_line not in content:
+            http_block_pattern = re.compile(r"(^\s*http\s*\{\s*$)", re.MULTILINE)
+            if http_block_pattern.search(content):
+                updated = http_block_pattern.sub(rf"\1\n    {fm_include_line}", content, count=1)
+            else:
+                updated = content.rstrip() + f"\n{fm_include_line}\n"
+            main_config_path.write_text(updated, encoding="utf-8")
+            LOGGER.info("Added fm nginx include to main config")
+    else:
+        LOGGER.warning("Main nginx config not found, skipping include update")
+
+    # Generate configs for each bench
+    for bench_name in bench_names:
+        bench = get_bench_func(bench_name)
+        if not bench:
+            LOGGER.warning("Bench '%s' not found in state, skipping", bench_name)
+            results[bench_name] = False
+            continue
+
+        domain = bench.get("domain", "")
+        if not domain:
+            LOGGER.warning("Bench '%s' has no domain, skipping", bench_name)
+            results[bench_name] = False
+            continue
+
+        try:
+            conf_path = nginx_conf_path(bench_name, config)
+            rendered = _render_nginx_server_block(bench_name=bench_name, domain=domain)
+            conf_path.write_text(rendered, encoding="utf-8")
+            LOGGER.info("Generated nginx config for bench '%s'", bench_name)
+            results[bench_name] = True
+        except Exception as exc:
+            LOGGER.warning("Failed to generate nginx config for bench '%s': %s", bench_name, exc)
+            results[bench_name] = False
+
+    # Validate and reload nginx
+    if config.nginx_validate_and_reload and any(results.values()):
+        try:
+            validate_nginx_config(config)
+            reload_nginx(config)
+            LOGGER.info("NGINX validated and reloaded successfully")
+        except Exception as exc:
+            LOGGER.warning("NGINX validation/reload failed: %s", exc)
+
+    return results

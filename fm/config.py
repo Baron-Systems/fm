@@ -18,6 +18,7 @@ class FMConfig:
     nginx_enabled: bool
     nginx_integration_enabled: bool
     nginx_conf_dir: Path
+    nginx_fm_conf_dir: Path
     nginx_main_config: Path
     nginx_bin: str
     nginx_ensure_main_include: bool
@@ -40,6 +41,7 @@ def _default_data() -> dict[str, Any]:
             "enabled": True,
             "integration_enabled": False,
             "conf_dir": "/etc/nginx/conf.d",
+            "fm_conf_dir": "/etc/fm/nginx",
             "main_config": "/etc/nginx/nginx.conf",
             "bin": "nginx",
             "ensure_main_include": True,
@@ -89,6 +91,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> FMConfig:
         nginx_enabled=bool(data["nginx"].get("enabled", True)),
         nginx_integration_enabled=bool(data["nginx"].get("integration_enabled", False)),
         nginx_conf_dir=Path(str(data["nginx"].get("conf_dir", "/etc/nginx/conf.d"))).expanduser(),
+        nginx_fm_conf_dir=Path(str(data["nginx"].get("fm_conf_dir", "/etc/fm/nginx"))).expanduser(),
         nginx_main_config=Path(str(data["nginx"].get("main_config", "/etc/nginx/nginx.conf"))).expanduser(),
         nginx_bin=str(data["nginx"].get("bin", "nginx")),
         nginx_ensure_main_include=bool(data["nginx"].get("ensure_main_include", True)),

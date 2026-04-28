@@ -7,6 +7,9 @@ from rich.table import Table
 
 from .config import load_config
 from . import core
+from . import nginx
+from .state import get_bench as state_get_bench
+from .state import get_all_benches as state_get_all_benches
 from .utils import setup_logging
 from .utils.interactive import InteractiveSelectionError, select_bench
 
@@ -293,6 +296,91 @@ def shell(
         else:
             console.print(f"[cyan]Opening backend shell for bench[/cyan] [bold]{name}[/bold]")
             core.open_bench_shell(name=name, config=config)
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@app.command("enable-proxy")
+def enable_proxy(
+    name: str | None = typer.Argument(None, help="Bench name (optional in interactive mode)"),
+) -> None:
+    """Enable reverse proxy for a bench."""
+    try:
+        name = _resolve_bench_name(name)
+        bench = state_get_bench(name)
+        if not bench:
+            console.print(f"[red]Bench '{name}' not found.[/red]")
+            raise typer.Exit(code=1)
+
+        domain = bench.get("domain", "")
+        if not domain:
+            console.print(f"[red]Bench '{name}' has no domain configured.[/red]")
+            raise typer.Exit(code=1)
+
+        logger.info("Enabling proxy for bench=%s domain=%s", name, domain)
+        with console.status(f"Enabling reverse proxy for {name}..."):
+            success = nginx.enable_proxy(name, domain, config)
+
+        if success:
+            console.print(f"[green]Reverse proxy enabled for bench:[/green] {name}")
+            console.print(f"[cyan]Config file:[/cyan] {config.nginx_fm_conf_dir / f'{name}.conf'}")
+        else:
+            console.print(f"[yellow]Failed to enable reverse proxy for bench:[/yellow] {name}")
+            console.print("[yellow]Check logs for details. NGINX may not be available.[/yellow]")
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@app.command("disable-proxy")
+def disable_proxy(
+    name: str | None = typer.Argument(None, help="Bench name (optional in interactive mode)"),
+) -> None:
+    """Disable reverse proxy for a bench."""
+    try:
+        name = _resolve_bench_name(name)
+        logger.info("Disabling proxy for bench=%s", name)
+        with console.status(f"Disabling reverse proxy for {name}..."):
+            success = nginx.disable_proxy(name, config)
+
+        if success:
+            console.print(f"[green]Reverse proxy disabled for bench:[/green] {name}")
+        else:
+            console.print(f"[yellow]Failed to disable reverse proxy for bench:[/yellow] {name}")
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@app.command("sync-proxy")
+def sync_proxy() -> None:
+    """Sync reverse proxy configurations for all benches."""
+    try:
+        logger.info("Syncing proxy configurations for all benches")
+        with console.status("Syncing reverse proxy configurations..."):
+            results = nginx.sync_proxy(state_get_all_benches, state_get_bench, config)
+
+        if not results:
+            console.print("[yellow]No benches found or NGINX not available.[/yellow]")
+            return
+
+        table = Table(title="Proxy Sync Results")
+        table.add_column("Bench", style="cyan")
+        table.add_column("Status", style="green")
+
+        for bench_name, success in results.items():
+            status = "[green]Success[/green]" if success else "[red]Failed[/red]"
+            table.add_row(bench_name, status)
+
+        console.print(table)
+
+        successful = sum(1 for s in results.values() if s)
+        total = len(results)
+        console.print(f"\n[cyan]Synced {successful}/{total} benches successfully.[/cyan]")
     except Exception as exc:
         _handle_error(exc)
 
