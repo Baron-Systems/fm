@@ -7,13 +7,15 @@ from rich.table import Table
 
 from .config import load_config
 from . import core
-from . import nginx
+from . import proxy
 from .state import get_bench as state_get_bench
 from .state import get_all_benches as state_get_all_benches
 from .utils import setup_logging
 from .utils.interactive import InteractiveSelectionError, select_bench
 
 app = typer.Typer(help="Mini Frappe Manager for ERPNext Docker benches.")
+proxy_app = typer.Typer(help="Proxy layer management for ingress routing.")
+app.add_typer(proxy_app, name="proxy")
 console = Console()
 config = load_config()
 logger = setup_logging(write_file=config.write_log_file, log_file=config.log_file)
@@ -319,7 +321,7 @@ def enable_proxy(
 
         logger.info("Enabling proxy for bench=%s domain=%s", name, domain)
         with console.status(f"Enabling reverse proxy for {name}..."):
-            success = nginx.enable_proxy(name, domain, config)
+            success = proxy.add_bench_to_proxy(name, domain, config)
 
         if success:
             console.print(f"[green]Reverse proxy enabled for bench:[/green] {name}")
@@ -343,7 +345,7 @@ def disable_proxy(
         name = _resolve_bench_name(name)
         logger.info("Disabling proxy for bench=%s", name)
         with console.status(f"Disabling reverse proxy for {name}..."):
-            success = nginx.disable_proxy(name, config)
+            success = proxy.remove_bench_from_proxy(name, config)
 
         if success:
             console.print(f"[green]Reverse proxy disabled for bench:[/green] {name}")
@@ -362,7 +364,7 @@ def sync_proxy() -> None:
     try:
         logger.info("Syncing proxy configurations for all benches")
         with console.status("Syncing reverse proxy configurations..."):
-            results = nginx.sync_proxy(state_get_all_benches, state_get_bench, config)
+            results = proxy.sync_proxy(state_get_all_benches, state_get_bench, config)
 
         if not results:
             console.print("[yellow]No benches found or NGINX not available.[/yellow]")
@@ -381,6 +383,163 @@ def sync_proxy() -> None:
         successful = sum(1 for s in results.values() if s)
         total = len(results)
         console.print(f"\n[cyan]Synced {successful}/{total} benches successfully.[/cyan]")
+    except Exception as exc:
+        _handle_error(exc)
+
+
+# Proxy subcommands
+@proxy_app.command("init")
+def proxy_init() -> None:
+    """Initialize the proxy layer infrastructure."""
+    try:
+        logger.info("Initializing proxy layer")
+        with console.status("Initializing proxy layer infrastructure..."):
+            success = proxy.init_proxy(config)
+
+        if success:
+            console.print("[green]Proxy layer initialized successfully[/green]")
+            console.print(f"[cyan]Config directory:[/cyan] {config.nginx_fm_conf_dir}")
+        else:
+            console.print("[yellow]Proxy layer initialization skipped or failed[/yellow]")
+            console.print("[yellow]NGINX may not be available. Check logs for details.[/yellow]")
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@proxy_app.command("add")
+def proxy_add(
+    name: str | None = typer.Argument(None, help="Bench name (optional in interactive mode)"),
+) -> None:
+    """Add a bench to the proxy layer."""
+    try:
+        name = _resolve_bench_name(name)
+        bench = state_get_bench(name)
+        if not bench:
+            console.print(f"[red]Bench '{name}' not found.[/red]")
+            raise typer.Exit(code=1)
+
+        domain = bench.get("domain", "")
+        if not domain:
+            console.print(f"[red]Bench '{name}' has no domain configured.[/red]")
+            raise typer.Exit(code=1)
+
+        logger.info("Adding bench %s to proxy layer for domain %s", name, domain)
+        with console.status(f"Adding bench {name} to proxy layer..."):
+            success = proxy.add_bench_to_proxy(name, domain, config)
+
+        if success:
+            console.print(f"[green]Bench added to proxy layer:[/green] {name}")
+            console.print(f"[cyan]Domain:[/cyan] {domain}")
+            console.print(f"[cyan]Config file:[/cyan] {config.nginx_fm_conf_dir / f'{name}.conf'}")
+        else:
+            console.print(f"[yellow]Failed to add bench to proxy layer:[/yellow] {name}")
+            console.print("[yellow]Check logs for details. NGINX may not be available.[/yellow]")
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@proxy_app.command("remove")
+def proxy_remove(
+    name: str | None = typer.Argument(None, help="Bench name (optional in interactive mode)"),
+) -> None:
+    """Remove a bench from the proxy layer."""
+    try:
+        name = _resolve_bench_name(name)
+        logger.info("Removing bench %s from proxy layer", name)
+        with console.status(f"Removing bench {name} from proxy layer..."):
+            success = proxy.remove_bench_from_proxy(name, config)
+
+        if success:
+            console.print(f"[green]Bench removed from proxy layer:[/green] {name}")
+        else:
+            console.print(f"[yellow]Failed to remove bench from proxy layer:[/yellow] {name}")
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@proxy_app.command("sync")
+def proxy_sync() -> None:
+    """Synchronize proxy configurations for all benches."""
+    try:
+        logger.info("Syncing proxy configurations for all benches")
+        with console.status("Synchronizing proxy configurations..."):
+            results = proxy.sync_proxy(state_get_all_benches, state_get_bench, config)
+
+        if not results:
+            console.print("[yellow]No benches found or NGINX not available.[/yellow]")
+            return
+
+        table = Table(title="Proxy Sync Results")
+        table.add_column("Bench", style="cyan")
+        table.add_column("Status", style="green")
+
+        for bench_name, success in results.items():
+            status = "[green]Success[/green]" if success else "[red]Failed[/red]"
+            table.add_row(bench_name, status)
+
+        console.print(table)
+
+        successful = sum(1 for s in results.values() if s)
+        total = len(results)
+        console.print(f"\n[cyan]Synced {successful}/{total} benches successfully.[/cyan]")
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@proxy_app.command("list")
+def proxy_list() -> None:
+    """List all benches registered in the proxy layer."""
+    try:
+        benches = proxy.list_proxy_benches(config)
+        if not benches:
+            console.print("[yellow]No benches registered in proxy layer.[/yellow]")
+            return
+
+        table = Table(title="Proxy Layer Benches")
+        table.add_column("Bench Name", style="cyan")
+        table.add_column("Config File", style="green")
+
+        for bench_name in benches:
+            conf_path = config.nginx_fm_conf_dir / f"{bench_name}.conf"
+            table.add_row(bench_name, str(conf_path))
+
+        console.print(table)
+        console.print(f"\n[cyan]Total: {len(benches)} bench(es)[/cyan]")
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@proxy_app.command("status")
+def proxy_status() -> None:
+    """Show the status of the proxy layer."""
+    try:
+        status = proxy.get_proxy_status(config)
+
+        console.print(
+            Panel.fit(
+                f"NGINX Available: [bold]{status['nginx_available']}[/bold]\n"
+                f"Config Directory: [bold]{status['config_dir']}[/bold]\n"
+                f"Config Dir Exists: [bold]{status['config_dir_exists']}[/bold]\n"
+                f"Main Config: [bold]{status['main_config']}[/bold]\n"
+                f"Main Config Exists: [bold]{status['main_config_exists']}[/bold]\n"
+                f"Registered Benches: [bold]{len(status['registered_benches'])}[/bold]",
+                title="Proxy Layer Status",
+                border_style="cyan",
+            )
+        )
+
+        if status["registered_benches"]:
+            table = Table(title="Registered Benches")
+            table.add_column("Bench Name", style="cyan")
+            for bench_name in status["registered_benches"]:
+                table.add_row(bench_name)
+            console.print(table)
     except Exception as exc:
         _handle_error(exc)
 
