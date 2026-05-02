@@ -237,6 +237,14 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         shutil.copy2(post_build_sh_src, post_build_sh_dst)
         os.chmod(post_build_sh_dst, 0o755)  # Make executable
         LOGGER.info("Copied post_build.sh script to %s", post_build_sh_dst)
+    
+    # Copy build hook
+    build_hook_src = Path(__file__).parent / "utils" / "build_hook.py"
+    build_hook_dst = utils_dir / "build_hook.py"
+    if build_hook_src.exists():
+        import shutil
+        shutil.copy2(build_hook_src, build_hook_dst)
+        LOGGER.info("Copied build_hook.py script to %s", build_hook_dst)
     state_upsert_bench(
         name,
         {
@@ -289,6 +297,18 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
         )
+        
+        # Build assets and copy them automatically
+        LOGGER.info("Building assets for bench %s", name)
+        docker.exec_in_backend(bench_dir, "bench build --app frappe --app erpnext")
+        
+        # Copy assets to nginx-accessible location
+        LOGGER.info("Copying assets to public build directory")
+        docker.exec_in_backend(
+            bench_dir,
+            f"bash utils/post_build.sh {shlex.quote(domain)}"
+        )
+        
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,
