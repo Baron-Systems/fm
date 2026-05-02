@@ -32,27 +32,7 @@ services:
       <<: *bench_env
     volumes: *bench_volumes
     # Simple and direct approach
-    command: >
-      bash -c "
-      cd /home/frappe/frappe-bench
-      
-      # Wait for database and Redis to be ready
-      echo 'Waiting for database and Redis...'
-      while ! nc -z db 3306 2>/dev/null; do
-        echo 'Database not ready, waiting...'
-        sleep 5
-      done
-      
-      while ! nc -z redis 6379 2>/dev/null; do
-        echo 'Redis not ready, waiting...'
-        sleep 5
-      done
-      
-      echo 'Dependencies ready, starting Frappe...'
-      
-      # Start Frappe with all services
-      exec bench start
-      "
+    command: ["bash", "-c", "cd /home/frappe/frappe-bench && echo 'Waiting for database and Redis...' && while ! nc -z db 3306 2>/dev/null; do echo 'Database not ready, waiting...' && sleep 5; done && while ! nc -z redis 6379 2>/dev/null; do echo 'Redis not ready, waiting...' && sleep 5; done && echo 'Dependencies ready, starting Frappe...' && exec bench start"]
     depends_on:
       - db
       - redis
