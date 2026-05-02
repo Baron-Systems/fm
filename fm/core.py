@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
 import socket
 import shutil
@@ -202,10 +203,21 @@ def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
     return docker.wait_for_service(host=host, port=port, timeout=timeout)
 
 
-def _wait_for_dependencies(bench_dir: Path, timeout: int = 120) -> None:
+def _wait_for_core_dependencies(bench_dir: Path, timeout: int = 120) -> None:
+    """Wait for core dependencies (db and redis) before starting backend."""
     docker.wait_for_service_in_backend(bench_dir, "db", 3306, timeout=timeout)
-    docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=timeout)
     docker.wait_for_service_in_backend(bench_dir, "redis", 6379, timeout=timeout)
+
+
+def _wait_for_backend(bench_dir: Path, timeout: int = 120) -> None:
+    """Wait for backend service to be ready."""
+    docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=timeout)
+
+
+def _wait_for_dependencies(bench_dir: Path, timeout: int = 120) -> None:
+    """Legacy function - now waits for all services including backend."""
+    _wait_for_core_dependencies(bench_dir, timeout=timeout)
+    _wait_for_backend(bench_dir, timeout=timeout)
 
 
 def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tuple[Path, str, Path]:
@@ -275,10 +287,22 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
 
     try:
         docker.compose_up(bench_dir)
-        # Wait for containers to stabilize after compose up
-        LOGGER.info("Waiting for containers to stabilize...")
+        # Wait for core containers to stabilize after compose up
+        LOGGER.info("Waiting for core containers to stabilize...")
         time.sleep(30)  # Initial wait for containers to fully start
-        _wait_for_dependencies(bench_dir, timeout=120)
+        _wait_for_core_dependencies(bench_dir, timeout=120)
+        
+        # Start Frappe backend service first
+        LOGGER.info("Starting Frappe backend service...")
+        docker.exec_in_backend(bench_dir, "bench serve --port=8000 --no-reload &")
+        
+        # Wait a bit for backend to start
+        time.sleep(10)
+        
+        # Now wait for backend to be ready
+        LOGGER.info("Waiting for backend service to be ready...")
+        _wait_for_backend(bench_dir, timeout=120)
+        
         # Ensure site creation uses the MariaDB service container, not localhost.
         docker.exec_in_backend(bench_dir, "bench set-config -g db_host db")
         docker.exec_in_backend(bench_dir, "bench set-config -g db_port 3306")
@@ -313,10 +337,6 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             f"bash utils/post_build.sh {shlex.quote(domain)}"
         )
-        
-        # Start Frappe backend manually
-        LOGGER.info("Starting Frappe backend service...")
-        docker.exec_in_backend(bench_dir, "bench serve --port=8000 --no-reload &")
         
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
@@ -475,7 +495,7 @@ def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str,
 import json
 import socket
 
-checks = {"backend:8000": ("backend", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+checks = {"backend:8000": ("localhost", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
 result = {}
 for key, (host, port) in checks.items():
     try:

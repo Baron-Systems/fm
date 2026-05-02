@@ -121,12 +121,16 @@ def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
 def wait_for_service_in_backend(bench_dir: Path, host: str, port: int, timeout: int = 120) -> None:
     """
     Wait for a service from inside backend container where docker DNS is available.
+    For the backend service itself, use localhost since we're checking from within the same container.
     """
+    # If checking for the backend service from within the backend container, use localhost
+    check_host = "localhost" if host == "backend" and port == 8000 else host
+    
     script = f"""python - <<'PY'
 import socket
 import time
 
-host = {host!r}
+host = {check_host!r}
 port = {port}
 timeout = {timeout}
 deadline = time.time() + timeout
