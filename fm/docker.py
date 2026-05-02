@@ -174,12 +174,19 @@ def _exec_in_backend_with_retry(
         try:
             return run_docker_compose(
                 bench_dir,
-                ["exec", "-T", "frappe", "sh", "-lc", command],
+                ["exec", "-T", "--interactive=false", "frappe", "sh", "-lc", command],
                 capture_output=capture_output,
             )
         except DockerCommandError as exc:
             msg = str(exc).lower()
-            transient = "received 409" in msg or "is restarting" in msg or "container" in msg and "not running" in msg
+            transient = (
+                "received 409" in msg
+                or "is restarting" in msg
+                or "not running" in msg
+                or "no such exec instance" in msg
+                or "failed to open stdin fifo" in msg
+                or "unknown docker error" in msg
+            )
             if not transient or attempt == retries:
                 raise
             last_exc = exc
