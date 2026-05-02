@@ -14,7 +14,7 @@ import yaml
 
 from .config import FMConfig, load_config
 from . import docker
-from .docker import DockerCommandError
+from .docker import DockerCommandError, run_docker_compose
 from .state import get_all_benches as state_get_all_benches
 from .state import get_bench as state_get_bench
 from .state import remove_bench as state_remove_bench
@@ -303,67 +303,64 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         
         # Wait for core services to start
         LOGGER.info("Waiting for core services to start...")
-        time.sleep(30)  # Give containers time to start
+        time.sleep(45)  # Give all services time to start
         
         # Wait for core dependencies to be ready
         LOGGER.info("Checking database and Redis connectivity...")
         _wait_for_core_dependencies(bench_dir, timeout=120)
         
-        # Start Frappe server in background
-        LOGGER.info("Starting Frappe server...")
-        try:
-            docker.exec_in_backend(bench_dir, "bench serve --port=8000 --noreload &")
-            LOGGER.info("Frappe server started")
-        except DockerCommandError as exc:
-            raise BenchError(f"Failed to start Frappe server: {exc}") from exc
+        # Wait for backend service to be ready
+        LOGGER.info("Waiting for backend service (port 8000)...")
+        docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=120)
         
-        # Wait for Frappe service to be ready
-        LOGGER.info("Waiting for Frappe service (port 8000)...")
-        time.sleep(15)  # Give server time to start
-        docker.wait_for_service_in_backend(bench_dir, "frappe", 8000, timeout=120)
+        # Wait for frontend service to be ready
+        LOGGER.info("Waiting for frontend service (port 80)...")
+        docker.wait_for_service_in_backend(bench_dir, "frontend", 80, timeout=120)
         
-        # Create the site
-        LOGGER.info("Creating site %s...", domain)
+        # Create the site with ERPNext app (official Frappe Docker method)
+        LOGGER.info("Creating site %s with ERPNext...", domain)
         try:
-            docker.exec_in_backend(
+            # Use docker compose exec directly (official method)
+            result = run_docker_compose(
                 bench_dir,
-                " ".join(
-                    [
-                        "bench",
-                        "new-site",
-                        shlex.quote(domain),
-                        f"--admin-password={shlex.quote(admin_password)}",
-                        f"--db-root-password={shlex.quote(db_root_password)}",
-                    ]
-                ),
+                [
+                    "exec",
+                    "backend",
+                    "bench",
+                    "new-site",
+                    shlex.quote(domain),
+                    "--mariadb-user-host-login-scope='%'",
+                    f"--db-root-password={shlex.quote(db_root_password)}",
+                    f"--admin-password={shlex.quote(admin_password)}",
+                    "--install-app",
+                    "erpnext"
+                ],
+                capture_output=True,
             )
+            
+            if result.returncode != 0:
+                raise DockerCommandError(f"Site creation failed: {result.stderr}")
+                
+            LOGGER.info("Site created and ERPNext installed successfully")
         except DockerCommandError as exc:
-            raise BenchError(f"Failed to create site: {exc}") from exc
-        
-        # Install ERPNext app
-        LOGGER.info("Installing ERPNext app...")
-        try:
-            docker.exec_in_backend(
-                bench_dir,
-                " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
-            )
-        except DockerCommandError as exc:
-            raise BenchError(f"Failed to install ERPNext: {exc}") from exc
+            raise BenchError(f"Failed to create site and install ERPNext: {exc}") from exc
         
         # Skip asset build for now (requires Node.js setup)
         LOGGER.info("Skipping asset build (can be done later with 'bench build')")
         # TODO: Add Node.js setup or use external build service
         
-        # Copy assets to nginx-accessible location
-        LOGGER.info("Copying assets to public build directory")
+        # Copy assets to nginx-accessible location (optional)
+        LOGGER.info("Copying assets to public build directory (optional)...")
         try:
             docker.exec_in_backend(
                 bench_dir,
                 f"bash utils/post_build.sh {shlex.quote(domain)}"
             )
+            LOGGER.info("Assets copied successfully")
         except DockerCommandError as exc:
-            # Non-critical error, just log warning
-            LOGGER.warning("Asset copying failed: %s", exc)
+            # Non-critical error, script may not exist
+            LOGGER.warning("Asset copying skipped (post_build script not available): %s", exc)
+            LOGGER.info("Continuing - site will still be functional")
         
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
@@ -528,8 +525,8 @@ def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str,
 import json
 import socket
 
-# Single container architecture - check frappe:8000 directly
-checks = {"frappe:8000": ("localhost", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+# Official multi-service architecture - check frontend:80 (nginx)
+checks = {"frontend:80": ("localhost", 80), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
 result = {}
 for key, (host, port) in checks.items():
     try:
