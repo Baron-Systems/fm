@@ -75,81 +75,78 @@ services:
     # Use supervisord to manage all processes
     command: >
       bash -c "
-      # Create supervisord config
-      cat > /home/frappe/frappe-bench/supervisord.conf << 'EOF'
-      [unix_http_server]
-      file=/tmp/supervisor.sock
-      
-      [supervisord]
-      nodaemon=true
-      logfile=/home/frappe/frappe-bench/logs/supervisord.log
-      pidfile=/home/frappe/frappe-bench/logs/supervisord.pid
-      
-      [rpcinterface:supervisor]
-      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
-      
-      [supervisorctl]
-      serverurl=unix:///tmp/supervisor.sock
-      
-      [program:frappe-backend]
-      command=bench serve --port=8000 --no-reload
-      directory=/home/frappe/frappe-bench
-      user=frappe
-      autostart=true
-      autorestart=true
-      stdout_logfile=/home/frappe/frappe-bench/logs/backend.log
-      stderr_logfile=/home/frappe/frappe-bench/logs/backend.error.log
-      
-      [program:frappe-socketio]
-      command=node apps/frappe/socketio.js
-      directory=/home/frappe/frappe-bench
-      user=frappe
-      autostart=true
-      autorestart=true
-      stdout_logfile=/home/frappe/frappe-bench/logs/socketio.log
-      stderr_logfile=/home/frappe/frappe-bench/logs/socketio.error.log
-      
-      [program:frappe-worker-short]
-      command=bench worker --queue short,default
-      directory=/home/frappe/frappe-bench
-      user=frappe
-      autostart=true
-      autorestart=true
-      stdout_logfile=/home/frappe/frappe-bench/logs/worker-short.log
-      stderr_logfile=/home/frappe/frappe-bench/logs/worker-short.error.log
-      
-      [program:frappe-worker-long]
-      command=bench worker --queue long,default,short
-      directory=/home/frappe/frappe-bench
-      user=frappe
-      autostart=true
-      autorestart=true
-      stdout_logfile=/home/frappe/frappe-bench/logs/worker-long.log
-      stderr_logfile=/home/frappe/frappe-bench/logs/worker-long.error.log
-      
-      [program:frappe-scheduler]
-      command=bench schedule
-      directory=/home/frappe/frappe-bench
-      user=frappe
-      autostart=true
-      autorestart=true
-      stdout_logfile=/home/frappe/frappe-bench/logs/scheduler.log
-      stderr_logfile=/home/frappe/frappe-bench/logs/scheduler.error.log
-      
-      [program:nginx]
-      command=nginx-entrypoint.sh
-      user=root
-      autostart=true
-      autorestart=true
-      stdout_logfile=/home/frappe/frappe-bench/logs/nginx.log
-      stderr_logfile=/home/frappe/frappe-bench/logs/nginx.error.log
-      
-      [program:nginx-health]
-      command=bash -c 'while ! curl -f http://localhost:80/health; do sleep 2; done'
-      user=frappe
-      autostart=false
-      startsecs=0
-      EOF
+      echo '[unix_http_server]' > /home/frappe/frappe-bench/supervisord.conf
+      echo 'file=/tmp/supervisor.sock' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[supervisord]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'nodaemon=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'logfile=/home/frappe/frappe-bench/logs/supervisord.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'pidfile=/home/frappe/frappe-bench/logs/supervisord.pid' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[rpcinterface:supervisor]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[supervisorctl]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'serverurl=unix:///tmp/supervisor.sock' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:frappe-backend]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=bench serve --port=8000 --no-reload' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'directory=/home/frappe/frappe-bench' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=frappe' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autorestart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stdout_logfile=/home/frappe/frappe-bench/logs/backend.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stderr_logfile=/home/frappe/frappe-bench/logs/backend.error.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:frappe-socketio]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=node apps/frappe/socketio.js' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'directory=/home/frappe/frappe-bench' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=frappe' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autorestart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stdout_logfile=/home/frappe/frappe-bench/logs/socketio.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stderr_logfile=/home/frappe/frappe-bench/logs/socketio.error.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:frappe-worker-short]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=bench worker --queue short,default' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'directory=/home/frappe/frappe-bench' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=frappe' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autorestart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stdout_logfile=/home/frappe/frappe-bench/logs/worker-short.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stderr_logfile=/home/frappe/frappe-bench/logs/worker-short.error.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:frappe-worker-long]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=bench worker --queue long,default,short' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'directory=/home/frappe/frappe-bench' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=frappe' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autorestart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stdout_logfile=/home/frappe/frappe-bench/logs/worker-long.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stderr_logfile=/home/frappe/frappe-bench/logs/worker-long.error.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:frappe-scheduler]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=bench schedule' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'directory=/home/frappe/frappe-bench' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=frappe' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autorestart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stdout_logfile=/home/frappe/frappe-bench/logs/scheduler.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stderr_logfile=/home/frappe/frappe-bench/logs/scheduler.error.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:nginx]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=nginx-entrypoint.sh' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=root' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autorestart=true' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stdout_logfile=/home/frappe/frappe-bench/logs/nginx.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'stderr_logfile=/home/frappe/frappe-bench/logs/nginx.error.log' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '' >> /home/frappe/frappe-bench/supervisord.conf
+      echo '[program:nginx-health]' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'command=bash -c \"while ! curl -f http://localhost:80/health; do sleep 2; done\"' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'user=frappe' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'autostart=false' >> /home/frappe/frappe-bench/supervisord.conf
+      echo 'startsecs=0' >> /home/frappe/frappe-bench/supervisord.conf
       
       # Start supervisord
       exec supervisord -c /home/frappe/frappe-bench/supervisord.conf
