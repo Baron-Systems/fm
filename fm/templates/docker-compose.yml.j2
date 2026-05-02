@@ -35,6 +35,7 @@ services:
     volumes:
       - sites:/home/frappe/frappe-bench/sites
       - logs:/home/frappe/frappe-bench/logs
+      - assets:/home/frappe/frappe-bench/assets
     restart: unless-stopped
 
   websocket:
@@ -46,6 +47,7 @@ services:
     volumes:
       - sites:/home/frappe/frappe-bench/sites
       - logs:/home/frappe/frappe-bench/logs
+      - assets:/home/frappe/frappe-bench/assets
     restart: unless-stopped
 
   frontend:
@@ -64,6 +66,10 @@ services:
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       PROXY_READ_TIMEOUT: "120"
       CLIENT_MAX_BODY_SIZE: 50m
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+      - assets:/home/frappe/frappe-bench/assets
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
@@ -76,3 +82,4 @@ volumes:
   db-data:
   sites:
   logs:
+  assets:
