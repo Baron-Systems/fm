@@ -58,6 +58,8 @@ services:
       - db
       - redis
     restart: unless-stopped
+    ports:
+      - "{{ PORT | default('8000') }}:8000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
