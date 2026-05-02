@@ -268,9 +268,6 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
         )
-        # Build assets after app installation
-        LOGGER.info("Building assets for bench %s", name)
-        docker.exec_in_backend(bench_dir, "bench build")
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,
