@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -147,13 +148,45 @@ def exec_in_backend(bench_dir: Path, command: str) -> None:
     Execute command in frappe container.
     Uses sh -lc to preserve quoting and arguments.
     """
-    run_docker_compose(bench_dir, ["exec", "-T", "frappe", "sh", "-lc", command])
+    _exec_in_backend_with_retry(bench_dir=bench_dir, command=command, capture_output=False)
 
 
 def exec_in_backend_output(bench_dir: Path, command: str) -> str:
     """Execute command in frappe container and return stdout."""
-    result = run_docker_compose(bench_dir, ["exec", "-T", "frappe", "sh", "-lc", command], capture_output=True)
+    result = _exec_in_backend_with_retry(bench_dir=bench_dir, command=command, capture_output=True)
     return result.stdout
+
+
+def _exec_in_backend_with_retry(
+    bench_dir: Path,
+    command: str,
+    capture_output: bool,
+    retries: int = 10,
+    delay_seconds: float = 2.0,
+) -> subprocess.CompletedProcess[str]:
+    """
+    Execute command in frappe container with retry for transient Docker errors.
+    Docker can return "unable to upgrade to tcp, received 409" while container
+    state is still converging immediately after compose up.
+    """
+    last_exc: DockerCommandError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return run_docker_compose(
+                bench_dir,
+                ["exec", "-T", "frappe", "sh", "-lc", command],
+                capture_output=capture_output,
+            )
+        except DockerCommandError as exc:
+            msg = str(exc).lower()
+            transient = "received 409" in msg or "is restarting" in msg or "container" in msg and "not running" in msg
+            if not transient or attempt == retries:
+                raise
+            last_exc = exc
+            time.sleep(delay_seconds)
+    if last_exc:
+        raise last_exc
+    raise DockerCommandError("Failed to execute command in backend container.")
 
 
 def exec_backend_interactive(bench_dir: Path, args: list[str]) -> None:

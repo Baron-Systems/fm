@@ -15,7 +15,9 @@ from .utils.interactive import InteractiveSelectionError, select_bench
 
 app = typer.Typer(help="Mini Frappe Manager for ERPNext Docker benches.")
 proxy_app = typer.Typer(help="Proxy layer management for ingress routing.")
+cloudflare_app = typer.Typer(help="Cloudflare Tunnel lifecycle commands.")
 app.add_typer(proxy_app, name="proxy")
+app.add_typer(cloudflare_app, name="cloudflare")
 console = Console()
 config = load_config()
 logger = setup_logging(write_file=config.write_log_file, log_file=config.log_file)
@@ -515,12 +517,6 @@ def proxy_list() -> None:
         _handle_error(exc)
 
 
-@app.command("cloudflare")
-def cloudflare() -> None:
-    """Manage Cloudflare Tunnel."""
-    pass
-
-
 @app.command("cloudflare-token")
 def cloudflare_token(
     token: str = typer.Option(..., "--token", "-t", help="Cloudflare Tunnel token"),
@@ -534,7 +530,7 @@ def cloudflare_token(
         cloudflare_manager.setup_tunnel(token, email)
         console.print("[green]✅ Cloudflare Tunnel configured successfully![/green]")
         console.print("\n[cyan]Next steps:[/cyan]")
-        console.print("1. Start services: [bold]fm cloudflare-start[/bold]")
+        console.print("1. Start services: [bold]fm cloudflare start[/bold]")
         console.print("2. Check dashboard: [bold]http://traefik.mby-solution.vip:8080[/bold]")
         console.print("3. Create benches: [bold]fm create site1 site1.mby-solution.vip[/bold]")
     except Exception as exc:
@@ -595,6 +591,33 @@ def cloudflare_status() -> None:
         console.print(table)
     except Exception as exc:
         _handle_error(exc)
+
+
+@cloudflare_app.command("token")
+def cloudflare_token_subcommand(
+    token: str = typer.Option(..., "--token", "-t", help="Cloudflare Tunnel token"),
+    email: str = typer.Option(..., "--email", "-e", help="ACME email for SSL certificates"),
+) -> None:
+    """Configure Cloudflare Tunnel token and setup containers."""
+    cloudflare_token(token=token, email=email)
+
+
+@cloudflare_app.command("start")
+def cloudflare_start_subcommand() -> None:
+    """Start Cloudflare Tunnel and Traefik containers."""
+    cloudflare_start()
+
+
+@cloudflare_app.command("stop")
+def cloudflare_stop_subcommand() -> None:
+    """Stop Cloudflare Tunnel and Traefik containers."""
+    cloudflare_stop()
+
+
+@cloudflare_app.command("status")
+def cloudflare_status_subcommand() -> None:
+    """Show Cloudflare Tunnel services status."""
+    cloudflare_status()
 
 
 if __name__ == "__main__":
