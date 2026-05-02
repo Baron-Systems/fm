@@ -72,12 +72,36 @@ services:
     environment:
       <<: *bench_env
     volumes: *bench_volumes
-    # Simple approach - run bench serve directly
+    # Wait for bench to be ready, then start services
     command: >
       bash -c "
-      cd /home/frappe/frappe-bench
+      echo 'Starting container initialization...'
       
-      # Start Frappe backend directly
+      # Check if we're in the right directory
+      cd /home/frappe/frappe-bench || exit 1
+      echo 'Changed to bench directory'
+      
+      # List what's in the directory
+      echo 'Current directory contents:'
+      ls -la
+      
+      # Wait for bench to be fully initialized
+      echo 'Waiting for bench initialization...'
+      timeout=300  # 5 minutes max wait
+      elapsed=0
+      while ! bench --version >/dev/null 2>&1; do
+        if [ $elapsed -ge $timeout ]; then
+          echo 'Timeout waiting for bench to be ready'
+          exit 1
+        fi
+        echo 'Bench not ready yet, waiting... ('$elapsed's elapsed)'
+        sleep 5
+        elapsed=$((elapsed + 5))
+      done
+      
+      echo 'Bench is ready, starting services...'
+      
+      # Start Frappe backend
       exec bench serve --port=8000 --no-reload
       "
     labels:
