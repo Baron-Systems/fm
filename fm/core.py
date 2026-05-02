@@ -278,27 +278,6 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
         )
-        # Build assets and copy them to correct locations
-        LOGGER.info("Building assets for bench %s", name)
-        docker.exec_in_backend(bench_dir, "bench build --app frappe --app erpnext")
-        
-        # Copy assets to nginx-accessible location
-        LOGGER.info("Copying assets to public build directory")
-        post_build_script = bench_dir / "utils" / "post_build.py"
-        if post_build_script.exists():
-            docker.exec_in_backend(
-                bench_dir, 
-                f"python utils/post_build.py {shlex.quote(domain)}"
-            )
-        else:
-            # Fallback manual copy
-            docker.exec_in_backend(
-                bench_dir,
-                f"mkdir -p sites/{shlex.quote(domain)}/public/build/{{css,js}} && "
-                f"find apps -name '*.css' -path '*/public/dist/css/*' -exec cp {{}} sites/{shlex.quote(domain)}/public/build/css/ \\; && "
-                f"find apps -name '*.js' -path '*/public/dist/js/*' -exec cp {{}} sites/{shlex.quote(domain)}/public/build/js/ \\;"
-            )
-        
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,

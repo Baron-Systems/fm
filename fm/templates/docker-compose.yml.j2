@@ -58,6 +58,17 @@ services:
     container_name: {{ NAME }}-redis
     restart: unless-stopped
 
+  nodejs:
+    image: node:18-alpine
+    container_name: {{ NAME }}-nodejs
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+      - assets:/home/frappe/frappe-bench/assets
+    working_dir: /home/frappe/frappe-bench
+    command: tail -f /dev/null
+    restart: unless-stopped
+
   backend:
     <<: *backend_defaults
     container_name: {{ NAME }}-backend
