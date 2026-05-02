@@ -309,17 +309,17 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         LOGGER.info("Checking database and Redis connectivity...")
         _wait_for_core_dependencies(bench_dir, timeout=120)
         
-        # Start Frappe services in background
-        LOGGER.info("Starting Frappe services...")
+        # Start Frappe server in background
+        LOGGER.info("Starting Frappe server...")
         try:
-            docker.exec_in_backend(bench_dir, "bench start &")
-            LOGGER.info("Frappe services started")
+            docker.exec_in_backend(bench_dir, "bench serve --port=8000 --noreload &")
+            LOGGER.info("Frappe server started")
         except DockerCommandError as exc:
-            raise BenchError(f"Failed to start Frappe services: {exc}") from exc
+            raise BenchError(f"Failed to start Frappe server: {exc}") from exc
         
         # Wait for Frappe service to be ready
         LOGGER.info("Waiting for Frappe service (port 8000)...")
-        time.sleep(15)  # Give services time to start
+        time.sleep(15)  # Give server time to start
         docker.wait_for_service_in_backend(bench_dir, "frappe", 8000, timeout=120)
         
         # Create the site
