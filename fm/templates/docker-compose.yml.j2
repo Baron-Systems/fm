@@ -143,6 +143,12 @@ services:
       autorestart=true
       stdout_logfile=/home/frappe/frappe-bench/logs/nginx.log
       stderr_logfile=/home/frappe/frappe-bench/logs/nginx.error.log
+      
+      [program:nginx-health]
+      command=bash -c "while ! curl -f http://localhost:80/health; do sleep 2; done"
+      user=frappe
+      autostart=false
+      startsecs=0
       EOF
       
       # Start supervisord

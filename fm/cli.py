@@ -515,31 +515,84 @@ def proxy_list() -> None:
         _handle_error(exc)
 
 
-@proxy_app.command("status")
-def proxy_status() -> None:
-    """Show the status of the proxy layer."""
+@app.command("cloudflare")
+def cloudflare() -> None:
+    """Manage Cloudflare Tunnel."""
+    pass
+
+
+@cloudflare.command("token")
+def cloudflare_token(
+    token: str = typer.Option(..., "--token", "-t", help="Cloudflare Tunnel token"),
+    email: str = typer.Option(..., "--email", "-e", help="ACME email for SSL certificates")
+) -> None:
+    """Configure Cloudflare Tunnel token and setup containers."""
     try:
-        status = proxy.get_proxy_status(config)
+        from . import cloudflare_manager
+        
+        console.print("[cyan]Setting up Cloudflare Tunnel...[/cyan]")
+        cloudflare_manager.setup_tunnel(token, email)
+        console.print("[green]✅ Cloudflare Tunnel configured successfully![/green]")
+        console.print("\n[cyan]Next steps:[/cyan]")
+        console.print("1. Start services: [bold]fm cloudflare start[/bold]")
+        console.print("2. Check dashboard: [bold]http://traefik.mby-solution.vip:8080[/bold]")
+        console.print("3. Create benches: [bold]fm create site1 site1.mby-solution.vip[/bold]")
+    except Exception as exc:
+        _handle_error(exc)
 
-        console.print(
-            Panel.fit(
-                f"NGINX Available: [bold]{status['nginx_available']}[/bold]\n"
-                f"Config Directory: [bold]{status['config_dir']}[/bold]\n"
-                f"Config Dir Exists: [bold]{status['config_dir_exists']}[/bold]\n"
-                f"Main Config: [bold]{status['main_config']}[/bold]\n"
-                f"Main Config Exists: [bold]{status['main_config_exists']}[/bold]\n"
-                f"Registered Benches: [bold]{len(status['registered_benches'])}[/bold]",
-                title="Proxy Layer Status",
-                border_style="cyan",
+
+@cloudflare.command("start")
+def cloudflare_start() -> None:
+    """Start Cloudflare Tunnel and Traefik containers."""
+    try:
+        from . import cloudflare_manager
+        
+        console.print("[cyan]Starting Cloudflare Tunnel services...[/cyan]")
+        cloudflare_manager.start_services()
+        console.print("[green]✅ Services started successfully![/green]")
+        console.print("\n[cyan]Services:[/cyan]")
+        console.print("• Cloudflare Tunnel: [green]Running[/green]")
+        console.print("• Traefik: [green]Running[/green]")
+        console.print("• Dashboard: [cyan]http://traefik.mby-solution.vip:8080[/cyan]")
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@cloudflare.command("stop")
+def cloudflare_stop() -> None:
+    """Stop Cloudflare Tunnel and Traefik containers."""
+    try:
+        from . import cloudflare_manager
+        
+        console.print("[cyan]Stopping Cloudflare Tunnel services...[/cyan]")
+        cloudflare_manager.stop_services()
+        console.print("[green]✅ Services stopped successfully![/green]")
+    except Exception as exc:
+        _handle_error(exc)
+
+
+@cloudflare.command("status")
+def cloudflare_status() -> None:
+    """Show Cloudflare Tunnel services status."""
+    try:
+        from . import cloudflare_manager
+        
+        console.print("[cyan]Cloudflare Tunnel Status:[/cyan]")
+        status = cloudflare_manager.get_status()
+        
+        table = Table(title="Services Status")
+        table.add_column("Service", style="cyan")
+        table.add_column("Status", style="green")
+        table.add_column("URL", style="blue")
+        
+        for service, info in status.items():
+            table.add_row(
+                service,
+                "[green]Running[/green]" if info["running"] else "[red]Stopped[/red]",
+                info.get("url", "N/A")
             )
-        )
-
-        if status["registered_benches"]:
-            table = Table(title="Registered Benches")
-            table.add_column("Bench Name", style="cyan")
-            for bench_name in status["registered_benches"]:
-                table.add_row(bench_name)
-            console.print(table)
+        
+        console.print(table)
     except Exception as exc:
         _handle_error(exc)
 
