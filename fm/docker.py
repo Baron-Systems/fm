@@ -125,11 +125,11 @@ def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
 def wait_for_service_in_backend(bench_dir: Path, host: str, port: int, timeout: int = 120) -> None:
     """
     Wait for a service from inside backend container where docker DNS is available.
-    For the backend service, check nginx on port 80 since supervisord manages nginx.
+    For the backend service, check localhost:8000 since we're running bench serve directly.
     """
-    # If checking for the backend service, check nginx on port 80 (supervisord manages nginx)
+    # If checking for the backend service, check localhost:8000 directly
     check_host = "localhost" if host == "backend" and port == 8000 else host
-    check_port = 80 if host == "backend" and port == 8000 else port
+    check_port = port  # Use the actual port since we're running bench serve directly
     
     script = f"""python - <<'PY'
 import socket

@@ -528,8 +528,8 @@ def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str,
 import json
 import socket
 
-# With supervisord, check nginx on port 80 instead of backend directly
-checks = {"backend:8000": ("localhost", 80), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+# Simple approach - check backend:8000 directly
+checks = {"backend:8000": ("localhost", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
 result = {}
 for key, (host, port) in checks.items():
     try:
