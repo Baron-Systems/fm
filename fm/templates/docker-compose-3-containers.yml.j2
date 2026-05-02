@@ -1,0 +1,123 @@
+x-customizable-image: &customizable_image
+  image: {{ ERPNEXT_IMAGE }}
+  restart: unless-stopped
+
+x-depends-on-configurator: &depends_on_configurator
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+x-app-volumes: &app_volumes
+  - sites:/home/frappe/frappe-bench/sites
+  - logs:/home/frappe/frappe-bench/logs
+  - assets:/home/frappe/frappe-bench/assets
+
+x-app-env: &app_env
+  DB_HOST: db
+  DB_PORT: "3306"
+  REDIS_CACHE: redis://redis:6379
+  REDIS_QUEUE: redis://redis:6379
+  SOCKETIO_PORT: 9000
+  SHELL: /bin/bash
+  TERM: xterm
+
+services:
+  configurator:
+    <<: *customizable_image
+    container_name: {{ NAME }}-configurator
+    platform: linux/amd64
+    entrypoint: [bash, -c]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
+    environment:
+      <<: *app_env
+    volumes: *app_volumes
+    depends_on: {}
+    restart: on-failure
+
+  db:
+    image: {{ MARIADB_IMAGE }}
+    container_name: {{ NAME }}-db
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ DB_ROOT_PASSWORD }}"
+      MARIADB_ROOT_PASSWORD: "{{ DB_ROOT_PASSWORD }}"
+    volumes:
+      - db-data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: {{ REDIS_IMAGE }}
+    container_name: {{ NAME }}-redis
+    restart: unless-stopped
+
+  # Container 1: All Frappe Services (Backend + WebSocket + Workers + Scheduler)
+  frappe-app:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-frappe-app
+    platform: linux/amd64
+    environment:
+      <<: *app_env
+    volumes: *app_volumes
+    # Run multiple processes using supervisord or a startup script
+    command: |
+      bash -c "
+      # Start backend in background
+      bench start &
+      
+      # Start websocket in background  
+      node apps/frappe/socketio.js &
+      
+      # Start workers in background
+      bench worker --queue short,default &
+      bench worker --queue long,default,short &
+      
+      # Start scheduler in background
+      bench schedule &
+      
+      # Keep container running
+      wait
+      "
+
+  # Container 2: Nginx Web Server Only
+  frappe-web:
+    <<: *customizable_image
+    container_name: {{ NAME }}-frappe-web
+    platform: linux/amd64
+    command: [nginx-entrypoint.sh]
+    environment:
+      BACKEND: frappe-app:8000
+      SOCKETIO: frappe-app:9000
+      FRAPPE_SITE_NAME_HEADER: {{ SITE_NAME }}
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: 50m
+    volumes: *app_volumes
+    depends_on:
+      - frappe-app
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
+      - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
+      - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
+      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8080"
+
+volumes:
+  db-data:
+  sites:
+  logs:
+  assets:

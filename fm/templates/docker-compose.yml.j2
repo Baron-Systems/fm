@@ -7,25 +7,27 @@ x-depends-on-configurator: &depends_on_configurator
     configurator:
       condition: service_completed_successfully
 
-x-backend-defaults: &backend_defaults
-  <<: [*depends_on_configurator, *customizable_image]
-  volumes:
-    - sites:/home/frappe/frappe-bench/sites
+x-bench-volumes: &bench_volumes
+  - sites:/home/frappe/frappe-bench/sites
+  - logs:/home/frappe/frappe-bench/logs
+  - assets:/home/frappe/frappe-bench/assets
 
-x-backend-env: &backend_env
+x-bench-env: &bench_env
   DB_HOST: db
   DB_PORT: "3306"
   REDIS_CACHE: redis://redis:6379
   REDIS_QUEUE: redis://redis:6379
+  REDIS_SOCKETIO: redis://redis:6379
   SOCKETIO_PORT: 9000
+  SHELL: /bin/bash
+  TERM: xterm
 
 services:
   configurator:
-    <<: *backend_defaults
+    <<: *customizable_image
+    container_name: {{ NAME }}-configurator
     platform: linux/amd64
-    entrypoint:
-      - bash
-      - -c
+    entrypoint: [bash, -c]
     command:
       - >
         ls -1 apps > sites/apps.txt;
@@ -37,7 +39,8 @@ services:
         bench set-config -gp socketio_port $$SOCKETIO_PORT;
         bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
     environment:
-      <<: *backend_env
+      <<: *bench_env
+    volumes: *bench_volumes
     depends_on: {}
     restart: on-failure
 
@@ -61,84 +64,96 @@ services:
     container_name: {{ NAME }}-redis
     restart: unless-stopped
 
-  nodejs:
-    image: node:18-alpine
-    container_name: {{ NAME }}-nodejs
-    volumes:
-      - sites:/home/frappe/frappe-bench/sites
-      - logs:/home/frappe/frappe-bench/logs
-      - assets:/home/frappe/frappe-bench/assets
-    working_dir: /home/frappe/frappe-bench
+  # Single Frappe Container (like rtCamp)
+  frappe:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-frappe
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+    volumes: *bench_volumes
+    # Use supervisord to manage all processes
     command: |
-      sh -c "
-      apk add --no-cache python3 py3-pip &&
-      tail -f /dev/null
+      bash -c "
+      # Create supervisord config
+      cat > /home/frappe/frappe-bench/supervisord.conf << 'EOF'
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+      
+      [supervisord]
+      nodaemon=true
+      logfile=/home/frappe/frappe-bench/logs/supervisord.log
+      pidfile=/home/frappe/frappe-bench/logs/supervisord.pid
+      
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+      
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+      
+      [program:frappe-backend]
+      command=bench serve --port=8000 --no-reload
+      directory=/home/frappe/frappe-bench
+      user=frappe
+      autostart=true
+      autorestart=true
+      stdout_logfile=/home/frappe/frappe-bench/logs/backend.log
+      stderr_logfile=/home/frappe/frappe-bench/logs/backend.error.log
+      
+      [program:frappe-socketio]
+      command=node apps/frappe/socketio.js
+      directory=/home/frappe/frappe-bench
+      user=frappe
+      autostart=true
+      autorestart=true
+      stdout_logfile=/home/frappe/frappe-bench/logs/socketio.log
+      stderr_logfile=/home/frappe/frappe-bench/logs/socketio.error.log
+      
+      [program:frappe-worker-short]
+      command=bench worker --queue short,default
+      directory=/home/frappe/frappe-bench
+      user=frappe
+      autostart=true
+      autorestart=true
+      stdout_logfile=/home/frappe/frappe-bench/logs/worker-short.log
+      stderr_logfile=/home/frappe/frappe-bench/logs/worker-short.error.log
+      
+      [program:frappe-worker-long]
+      command=bench worker --queue long,default,short
+      directory=/home/frappe/frappe-bench
+      user=frappe
+      autostart=true
+      autorestart=true
+      stdout_logfile=/home/frappe/frappe-bench/logs/worker-long.log
+      stderr_logfile=/home/frappe/frappe-bench/logs/worker-long.error.log
+      
+      [program:frappe-scheduler]
+      command=bench schedule
+      directory=/home/frappe/frappe-bench
+      user=frappe
+      autostart=true
+      autorestart=true
+      stdout_logfile=/home/frappe/frappe-bench/logs/scheduler.log
+      stderr_logfile=/home/frappe/frappe-bench/logs/scheduler.error.log
+      
+      [program:nginx]
+      command=nginx-entrypoint.sh
+      user=root
+      autostart=true
+      autorestart=true
+      stdout_logfile=/home/frappe/frappe-bench/logs/nginx.log
+      stderr_logfile=/home/frappe/frappe-bench/logs/nginx.error.log
+      EOF
+      
+      # Start supervisord
+      exec supervisord -c /home/frappe/frappe-bench/supervisord.conf
       "
-    restart: unless-stopped
-
-  backend:
-    <<: *backend_defaults
-    container_name: {{ NAME }}-backend
-    platform: linux/amd64
-    environment:
-      <<: *backend_env
-      SHELL: /bin/bash
-      TERM: xterm
-
-  frontend:
-    <<: *customizable_image
-    container_name: {{ NAME }}-frontend
-    platform: linux/amd64
-    command:
-      - nginx-entrypoint.sh
-    environment:
-      BACKEND: backend:8000
-      SOCKETIO: websocket:9000
-      FRAPPE_SITE_NAME_HEADER: {{ SITE_NAME }}
-      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
-      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
-      UPSTREAM_REAL_IP_RECURSIVE: "off"
-      PROXY_READ_TIMEOUT: "120"
-      CLIENT_MAX_BODY_SIZE: 50m
-    volumes:
-      - sites:/home/frappe/frappe-bench/sites
-    depends_on:
-      - backend
-      - websocket
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
       - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
       - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
-      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8080"
-
-  websocket:
-    <<: [*depends_on_configurator, *customizable_image]
-    container_name: {{ NAME }}-websocket
-    platform: linux/amd64
-    command:
-      - node
-      - /home/frappe/frappe-bench/apps/frappe/socketio.js
-    volumes:
-      - sites:/home/frappe/frappe-bench/sites
-
-  queue-short:
-    <<: *backend_defaults
-    container_name: {{ NAME }}-queue-short
-    platform: linux/amd64
-    command: bench worker --queue short,default
-
-  queue-long:
-    <<: *backend_defaults
-    container_name: {{ NAME }}-queue-long
-    platform: linux/amd64
-    command: bench worker --queue long,default,short
-
-  scheduler:
-    <<: *backend_defaults
-    container_name: {{ NAME }}-scheduler
-    platform: linux/amd64
-    command: bench schedule
+      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=80"
 
 volumes:
   db-data:
