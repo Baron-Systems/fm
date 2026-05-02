@@ -93,8 +93,8 @@ def _render_compose(
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    # Use the simple template without supervisord to avoid restarting issues
-    template = env.get_template("docker-compose-simple.yml.j2")
+    # Use the proper template with supervisord for production-ready deployment
+    template = env.get_template("docker-compose.yml.j2")
     return template.render(
         NAME=name,
         DOMAIN=domain,
@@ -286,57 +286,84 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
     compose_path.write_text(compose_content, encoding="utf-8")
 
     try:
+        # Start containers
+        LOGGER.info("Starting Docker containers...")
         docker.compose_up(bench_dir)
-        # Wait for core containers to stabilize after compose up
-        LOGGER.info("Waiting for core containers to stabilize...")
-        time.sleep(30)  # Initial wait for containers to fully start
+        
+        # Validate containers are running
+        LOGGER.info("Validating container status...")
+        containers = docker.compose_ps_json(bench_dir)
+        if not containers:
+            raise BenchError("No containers started after compose up")
+        
+        running_containers = [c for c in containers if "running" in (c.get("State") or "").lower()]
+        if len(running_containers) < 3:  # db, redis, frappe minimum
+            raise BenchError(f"Insufficient containers running: {len(running_containers)}/3")
+        
+        # Wait for all services to be ready with supervisord
+        LOGGER.info("Waiting for services to start with supervisord...")
+        time.sleep(45)  # Give supervisord time to start all services
+        
+        # Wait for core dependencies to be ready
+        LOGGER.info("Checking database and Redis connectivity...")
         _wait_for_core_dependencies(bench_dir, timeout=120)
         
-        # Start Frappe backend service first
-        LOGGER.info("Starting Frappe backend service...")
-        docker.exec_in_backend(bench_dir, "bench serve --port=8000 --no-reload &")
+        # Wait for backend service to be ready (supervisord manages it)
+        LOGGER.info("Waiting for Frappe backend service (via nginx)...")
+        _wait_for_backend(bench_dir, timeout=180)  # Longer timeout for supervisord
         
-        # Wait a bit for backend to start
-        time.sleep(10)
+        # Verify bench environment is ready
+        LOGGER.info("Verifying bench environment...")
+        try:
+            docker.exec_in_backend(bench_dir, "bench --version")
+        except DockerCommandError as exc:
+            raise BenchError(f"Bench environment not ready: {exc}") from exc
         
-        # Now wait for backend to be ready
-        LOGGER.info("Waiting for backend service to be ready...")
-        _wait_for_backend(bench_dir, timeout=120)
+        # Create the site
+        LOGGER.info("Creating site %s...", domain)
+        try:
+            docker.exec_in_backend(
+                bench_dir,
+                " ".join(
+                    [
+                        "bench",
+                        "new-site",
+                        shlex.quote(domain),
+                        f"--admin-password={shlex.quote(admin_password)}",
+                        f"--db-root-password={shlex.quote(db_root_password)}",
+                    ]
+                ),
+            )
+        except DockerCommandError as exc:
+            raise BenchError(f"Failed to create site: {exc}") from exc
         
-        # Ensure site creation uses the MariaDB service container, not localhost.
-        docker.exec_in_backend(bench_dir, "bench set-config -g db_host db")
-        docker.exec_in_backend(bench_dir, "bench set-config -g db_port 3306")
-        # Ensure Frappe uses Redis service in the compose network.
-        docker.exec_in_backend(bench_dir, "bench set-config -g redis_cache redis://redis:6379")
-        docker.exec_in_backend(bench_dir, "bench set-config -g redis_queue redis://redis:6379")
-        docker.exec_in_backend(bench_dir, "bench set-config -g redis_socketio redis://redis:6379")
-        docker.exec_in_backend(
-            bench_dir,
-            " ".join(
-                [
-                    "bench",
-                    "new-site",
-                    shlex.quote(domain),
-                    f"--admin-password={shlex.quote(admin_password)}",
-                    f"--db-root-password={shlex.quote(db_root_password)}",
-                ]
-            ),
-        )
-        docker.exec_in_backend(
-            bench_dir,
-            " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
-        )
+        # Install ERPNext app
+        LOGGER.info("Installing ERPNext app...")
+        try:
+            docker.exec_in_backend(
+                bench_dir,
+                " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
+            )
+        except DockerCommandError as exc:
+            raise BenchError(f"Failed to install ERPNext: {exc}") from exc
         
-        # Build assets and copy them automatically
+        # Build assets
         LOGGER.info("Building assets for bench %s", name)
-        docker.exec_in_backend(bench_dir, "bench build --app frappe --app erpnext")
+        try:
+            docker.exec_in_backend(bench_dir, "bench build --app frappe --app erpnext")
+        except DockerCommandError as exc:
+            raise BenchError(f"Failed to build assets: {exc}") from exc
         
         # Copy assets to nginx-accessible location
         LOGGER.info("Copying assets to public build directory")
-        docker.exec_in_backend(
-            bench_dir,
-            f"bash utils/post_build.sh {shlex.quote(domain)}"
-        )
+        try:
+            docker.exec_in_backend(
+                bench_dir,
+                f"bash utils/post_build.sh {shlex.quote(domain)}"
+            )
+        except DockerCommandError as exc:
+            # Non-critical error, just log warning
+            LOGGER.warning("Asset copying failed: %s", exc)
         
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
@@ -364,9 +391,12 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
 def start_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_start(bench_dir)
-    # Wait for services to be healthy
-    LOGGER.info("Waiting for services to be healthy...")
-    _wait_for_dependencies(bench_dir, timeout=120)
+    # Wait for services to be healthy with proper sequence
+    LOGGER.info("Waiting for core services to start...")
+    time.sleep(30)  # Give supervisord time to start services
+    _wait_for_core_dependencies(bench_dir, timeout=120)
+    LOGGER.info("Waiting for backend service...")
+    _wait_for_backend(bench_dir, timeout=180)
     state_upsert_bench(name, {"status": "running"})
 
 
@@ -379,9 +409,12 @@ def stop_bench(name: str, config: FMConfig | None = None) -> None:
 def restart_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_restart(bench_dir)
-    # Wait for services to be healthy
-    LOGGER.info("Waiting for services to be healthy...")
-    _wait_for_dependencies(bench_dir, timeout=120)
+    # Wait for services to be healthy with proper sequence
+    LOGGER.info("Waiting for core services to restart...")
+    time.sleep(30)  # Give supervisord time to restart services
+    _wait_for_core_dependencies(bench_dir, timeout=120)
+    LOGGER.info("Waiting for backend service...")
+    _wait_for_backend(bench_dir, timeout=180)
     state_upsert_bench(name, {"status": "running"})
 
 
@@ -495,7 +528,8 @@ def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str,
 import json
 import socket
 
-checks = {"backend:8000": ("localhost", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+# With supervisord, check nginx on port 80 instead of backend directly
+checks = {"backend:8000": ("localhost", 80), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
 result = {}
 for key, (host, port) in checks.items():
     try:

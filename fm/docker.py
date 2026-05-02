@@ -104,34 +104,39 @@ def compose_logs_follow(bench_dir: Path, service: Optional[str] = None) -> None:
 def wait_for_service(host: str, port: int, timeout: int = 120) -> bool:
     """
     Wait until TCP service is reachable.
-    Retries every 2 seconds until timeout.
+    Uses exponential backoff for better reliability.
     """
     import time
 
     deadline = time.time() + timeout
+    attempt = 0
     while time.time() < deadline:
         try:
             with socket.create_connection((host, port), timeout=2):
                 return True
         except OSError:
-            time.sleep(2)
+            attempt += 1
+            # Exponential backoff: 2, 4, 8, 16, 30 seconds max
+            backoff = min(2 ** attempt, 30)
+            time.sleep(backoff)
     raise DockerCommandError(f"Service {host}:{port} did not become ready within {timeout}s")
 
 
 def wait_for_service_in_backend(bench_dir: Path, host: str, port: int, timeout: int = 120) -> None:
     """
     Wait for a service from inside backend container where docker DNS is available.
-    For the backend service itself, use localhost since we're checking from within the same container.
+    For the backend service, check nginx on port 80 since supervisord manages nginx.
     """
-    # If checking for the backend service from within the backend container, use localhost
+    # If checking for the backend service, check nginx on port 80 (supervisord manages nginx)
     check_host = "localhost" if host == "backend" and port == 8000 else host
+    check_port = 80 if host == "backend" and port == 8000 else port
     
     script = f"""python - <<'PY'
 import socket
 import time
 
 host = {check_host!r}
-port = {port}
+port = {check_port}
 timeout = {timeout}
 deadline = time.time() + timeout
 
