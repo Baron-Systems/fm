@@ -23,9 +23,30 @@ x-bench-env: &bench_env
   TERM: xterm
 
 services:
+  configurator:
+    <<: *customizable_image
+    container_name: {{ NAME }}-configurator
+    platform: linux/amd64
+    entrypoint: [bash, -c]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
+    environment:
+      <<: *bench_env
+    volumes: *bench_volumes
+    depends_on: {}
+    restart: on-failure
+
   # Single container approach - everything in one container
   frappe:
-    <<: *customizable_image
+    <<: [*depends_on_configurator, *customizable_image]
     container_name: {{ NAME }}-frappe
     platform: linux/amd64
     environment:

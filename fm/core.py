@@ -14,6 +14,7 @@ import yaml
 
 from .config import FMConfig, load_config
 from . import docker
+from .docker import DockerCommandError
 from .state import get_all_benches as state_get_all_benches
 from .state import get_bench as state_get_bench
 from .state import remove_bench as state_remove_bench
@@ -646,7 +647,7 @@ def open_bench_shell(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     try:
         docker.exec_backend_interactive(bench_dir, ["bash"])
-    except docker.DockerCommandError:
+    except DockerCommandError:
         docker.exec_backend_interactive(bench_dir, ["sh"])
 
 
