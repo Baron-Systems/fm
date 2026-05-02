@@ -72,7 +72,7 @@ services:
     environment:
       <<: *bench_env
     volumes: *bench_volumes
-    command: bench serve --port=8000 --no-reload
+    command: bench serve --port=8000 --noreload
     restart: unless-stopped
 
   # Frontend service - Nginx reverse proxy
