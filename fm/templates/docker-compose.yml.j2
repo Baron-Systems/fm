@@ -44,29 +44,6 @@ services:
     depends_on: {}
     restart: on-failure
 
-  # Single container approach - everything in one container
-  frappe:
-    <<: [*depends_on_configurator, *customizable_image]
-    container_name: {{ NAME }}-frappe
-    platform: linux/amd64
-    environment:
-      <<: *bench_env
-    volumes: *bench_volumes
-    # Simple and direct approach
-    command: ["bash", "-c", "cd /home/frappe/frappe-bench && echo 'Waiting for database and Redis...' && while ! timeout 2 bash -c 'echo >/dev/tcp/db/3306' 2>/dev/null; do echo 'Database not ready, waiting...' && sleep 5; done && while ! timeout 2 bash -c 'echo >/dev/tcp/redis/6379' 2>/dev/null; do echo 'Redis not ready, waiting...' && sleep 5; done && echo 'Dependencies ready, starting Frappe...' && exec bench serve --port=8000 --noreload"]
-    depends_on:
-      - db
-      - redis
-    restart: unless-stopped
-    ports:
-      - "{{ PORT | default('8000') }}:8000"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
-      - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
-      - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
-      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8000"
-
   db:
     image: {{ MARIADB_IMAGE }}
     container_name: {{ NAME }}-db
@@ -86,6 +63,22 @@ services:
     image: {{ REDIS_IMAGE }}
     container_name: {{ NAME }}-redis
     restart: unless-stopped
+
+  # Official Frappe approach - container ready for commands
+  frappe:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-frappe
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+    volumes: *bench_volumes
+    command: bash -c "tail -f /dev/null"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
+      - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
+      - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
+      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8000"
 
 volumes:
   db-data:
