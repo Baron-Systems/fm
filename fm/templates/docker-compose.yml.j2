@@ -73,7 +73,7 @@ services:
       <<: *bench_env
     volumes: *bench_volumes
     # Use supervisord to manage all processes
-    command: |
+    command: >
       bash -c "
       # Create supervisord config
       cat > /home/frappe/frappe-bench/supervisord.conf << 'EOF'
@@ -145,7 +145,7 @@ services:
       stderr_logfile=/home/frappe/frappe-bench/logs/nginx.error.log
       
       [program:nginx-health]
-      command=bash -c "while ! curl -f http://localhost:80/health; do sleep 2; done"
+      command=bash -c 'while ! curl -f http://localhost:80/health; do sleep 2; done'
       user=frappe
       autostart=false
       startsecs=0
