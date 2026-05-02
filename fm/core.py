@@ -268,6 +268,9 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             " ".join(["bench", "--site", shlex.quote(domain), "install-app", "erpnext"]),
         )
+        # Build assets after app installation
+        LOGGER.info("Building assets for bench %s", name)
+        docker.exec_in_backend(bench_dir, "bench build")
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
             name,
@@ -294,6 +297,9 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
 def start_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_start(bench_dir)
+    # Wait for services to be healthy
+    LOGGER.info("Waiting for services to be healthy...")
+    _wait_for_dependencies(bench_dir, timeout=120)
     state_upsert_bench(name, {"status": "running"})
 
 
@@ -306,6 +312,9 @@ def stop_bench(name: str, config: FMConfig | None = None) -> None:
 def restart_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_restart(bench_dir)
+    # Wait for services to be healthy
+    LOGGER.info("Waiting for services to be healthy...")
+    _wait_for_dependencies(bench_dir, timeout=120)
     state_upsert_bench(name, {"status": "running"})
 
 
