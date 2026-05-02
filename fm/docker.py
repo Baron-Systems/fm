@@ -159,8 +159,15 @@ def exec_in_backend_output(bench_dir: Path, command: str) -> str:
 def exec_backend_interactive(bench_dir: Path, args: list[str]) -> None:
     """
     Execute an interactive command in backend container with TTY attached.
+    Uses proper shell environment to ensure all commands work correctly.
     """
-    run_docker_compose(bench_dir, ["exec", "backend", *args], capture_output=False)
+    if args == ["bash"]:
+        # For bash shell, use direct execution with proper environment
+        run_docker_compose(bench_dir, ["exec", "backend", "bash"], capture_output=False)
+    else:
+        # For other commands, use shell environment
+        shell_cmd = " ".join(args)
+        run_docker_compose(bench_dir, ["exec", "backend", "sh", "-lc", shell_cmd], capture_output=False)
 
 
 def docker_available() -> bool:

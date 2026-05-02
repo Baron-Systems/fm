@@ -217,15 +217,26 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
     bench_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info("Created bench directory: %s", bench_dir)
     
-    # Copy post_build script to bench utils
+    # Copy post_build scripts to bench utils
     utils_dir = bench_dir / "utils"
     utils_dir.mkdir(exist_ok=True)
-    post_build_src = Path(__file__).parent / "utils" / "post_build.py"
-    post_build_dst = utils_dir / "post_build.py"
-    if post_build_src.exists():
+    
+    # Copy Python script
+    post_build_py_src = Path(__file__).parent / "utils" / "post_build.py"
+    post_build_py_dst = utils_dir / "post_build.py"
+    if post_build_py_src.exists():
         import shutil
-        shutil.copy2(post_build_src, post_build_dst)
-        LOGGER.info("Copied post_build script to %s", post_build_dst)
+        shutil.copy2(post_build_py_src, post_build_py_dst)
+        LOGGER.info("Copied post_build.py script to %s", post_build_py_dst)
+    
+    # Copy Bash script
+    post_build_sh_src = Path(__file__).parent / "utils" / "post_build.sh"
+    post_build_sh_dst = utils_dir / "post_build.sh"
+    if post_build_sh_src.exists():
+        import shutil
+        shutil.copy2(post_build_sh_src, post_build_sh_dst)
+        os.chmod(post_build_sh_dst, 0o755)  # Make executable
+        LOGGER.info("Copied post_build.sh script to %s", post_build_sh_dst)
     state_upsert_bench(
         name,
         {

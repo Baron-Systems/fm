@@ -12,6 +12,13 @@ x-backend-defaults: &backend_defaults
   volumes:
     - sites:/home/frappe/frappe-bench/sites
 
+x-backend-env: &backend_env
+  DB_HOST: db
+  DB_PORT: "3306"
+  REDIS_CACHE: redis://redis:6379
+  REDIS_QUEUE: redis://redis:6379
+  SOCKETIO_PORT: 9000
+
 services:
   configurator:
     <<: *backend_defaults
@@ -30,11 +37,7 @@ services:
         bench set-config -gp socketio_port $$SOCKETIO_PORT;
         bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
     environment:
-      DB_HOST: db
-      DB_PORT: "3306"
-      REDIS_CACHE: redis://redis:6379
-      REDIS_QUEUE: redis://redis:6379
-      SOCKETIO_PORT: 9000
+      <<: *backend_env
     depends_on: {}
     restart: on-failure
 
@@ -66,13 +69,21 @@ services:
       - logs:/home/frappe/frappe-bench/logs
       - assets:/home/frappe/frappe-bench/assets
     working_dir: /home/frappe/frappe-bench
-    command: tail -f /dev/null
+    command: |
+      sh -c "
+      apk add --no-cache python3 py3-pip &&
+      tail -f /dev/null
+      "
     restart: unless-stopped
 
   backend:
     <<: *backend_defaults
     container_name: {{ NAME }}-backend
     platform: linux/amd64
+    environment:
+      <<: *backend_env
+      SHELL: /bin/bash
+      TERM: xterm
 
   frontend:
     <<: *customizable_image
