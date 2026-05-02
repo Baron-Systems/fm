@@ -200,7 +200,7 @@ def _exec_in_backend_with_retry(
 
 def exec_backend_interactive(bench_dir: Path, args: list[str]) -> None:
     """
-    Execute an interactive command in frappe container with TTY attached.
+    Execute an interactive command in backend container with TTY attached.
     Uses proper shell environment to ensure all commands work correctly.
     """
     if args == ["bash"]:
