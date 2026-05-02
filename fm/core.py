@@ -209,7 +209,7 @@ def _wait_for_core_dependencies(bench_dir: Path, timeout: int = 120) -> None:
     docker.wait_for_service_in_backend(bench_dir, "redis", 6379, timeout=timeout)
 
 
-def _wait_for_backend(bench_dir: Path, timeout: int = 120) -> None:
+def _wait_for_backend(bench_dir: Path, timeout: int = 300) -> None:
     """Wait for frontend nginx service to be ready."""
     docker.wait_for_service_in_backend(bench_dir, "frontend", 80, timeout=timeout)
 
@@ -300,17 +300,17 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         if len(running_containers) < 3:  # db, redis, frappe minimum
             raise BenchError(f"Insufficient containers running: {len(running_containers)}/3")
         
-        # Wait for all services to be ready with supervisord
-        LOGGER.info("Waiting for services to start with supervisord...")
-        time.sleep(45)  # Give supervisord time to start all services
+        # Wait for core services to start
+        LOGGER.info("Waiting for core services to start...")
+        time.sleep(30)  # Give containers time to start
         
         # Wait for core dependencies to be ready
         LOGGER.info("Checking database and Redis connectivity...")
         _wait_for_core_dependencies(bench_dir, timeout=120)
         
-        # Wait for backend service to be ready (supervisord manages it)
-        LOGGER.info("Waiting for Frappe backend service (via nginx)...")
-        _wait_for_backend(bench_dir, timeout=180)  # Longer timeout for supervisord
+        # Wait for Frappe service to be ready
+        LOGGER.info("Waiting for Frappe service (port 8000)...")
+        docker.wait_for_service_in_backend(bench_dir, "frappe", 8000, timeout=300)
         
         # Verify bench environment is ready
         LOGGER.info("Verifying bench environment...")
@@ -528,8 +528,8 @@ def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str,
 import json
 import socket
 
-# Multi-service architecture - check frontend:80 (nginx) instead of backend directly
-checks = {"frontend:80": ("localhost", 80), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+# Single container architecture - check frappe:8000 directly
+checks = {"frappe:8000": ("localhost", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
 result = {}
 for key, (host, port) in checks.items():
     try:
