@@ -161,8 +161,8 @@ def _exec_in_backend_with_retry(
     bench_dir: Path,
     command: str,
     capture_output: bool,
-    retries: int = 10,
-    delay_seconds: float = 2.0,
+    retries: int = 30,
+    delay_seconds: float = 5.0,
 ) -> subprocess.CompletedProcess[str]:
     """
     Execute command in frappe container with retry for transient Docker errors.
@@ -188,11 +188,14 @@ def _exec_in_backend_with_retry(
                 or "no such exec instance" in msg
                 or "failed to open stdin fifo" in msg
                 or "unknown docker error" in msg
+                or "no such file or directory" in msg
             )
             if not transient or attempt == retries:
                 raise
             last_exc = exc
-            time.sleep(delay_seconds)
+            # Progressive backoff: wait longer on later attempts
+            backoff_delay = delay_seconds * (1 + (attempt - 1) * 0.5)
+            time.sleep(backoff_delay)
     if last_exc:
         raise last_exc
     raise DockerCommandError("Failed to execute command in frappe container.")

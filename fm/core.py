@@ -5,6 +5,7 @@ import logging
 import shlex
 import socket
 import shutil
+import time
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -274,6 +275,9 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
 
     try:
         docker.compose_up(bench_dir)
+        # Wait for containers to stabilize after compose up
+        LOGGER.info("Waiting for containers to stabilize...")
+        time.sleep(30)  # Initial wait for containers to fully start
         _wait_for_dependencies(bench_dir, timeout=120)
         # Ensure site creation uses the MariaDB service container, not localhost.
         docker.exec_in_backend(bench_dir, "bench set-config -g db_host db")
