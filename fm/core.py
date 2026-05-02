@@ -92,8 +92,8 @@ def _render_compose(
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    # Use the single container template with Node.js included
-    template = env.get_template("docker-compose.yml.j2")
+    # Use the simple template without supervisord to avoid restarting issues
+    template = env.get_template("docker-compose-simple.yml.j2")
     return template.render(
         NAME=name,
         DOMAIN=domain,
@@ -313,6 +313,10 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
             bench_dir,
             f"bash utils/post_build.sh {shlex.quote(domain)}"
         )
+        
+        # Start Frappe backend manually
+        LOGGER.info("Starting Frappe backend service...")
+        docker.exec_in_backend(bench_dir, "bench serve --port=8000 --no-reload &")
         
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(

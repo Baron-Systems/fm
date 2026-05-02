@@ -1,0 +1,87 @@
+x-customizable-image: &customizable_image
+  image: {{ ERPNEXT_IMAGE }}
+  restart: unless-stopped
+
+x-depends-on-configurator: &depends_on_configurator
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+x-bench-volumes: &bench_volumes
+  - sites:/home/frappe/frappe-bench/sites
+  - logs:/home/frappe/frappe-bench/logs
+  - assets:/home/frappe/frappe-bench/assets
+
+x-bench-env: &bench_env
+  DB_HOST: db
+  DB_PORT: "3306"
+  REDIS_CACHE: redis://redis:6379
+  REDIS_QUEUE: redis://redis:6379
+  REDIS_SOCKETIO: redis://redis:6379
+  SOCKETIO_PORT: 9000
+  SHELL: /bin/bash
+  TERM: xterm
+
+services:
+  configurator:
+    <<: *customizable_image
+    container_name: {{ NAME }}-configurator
+    platform: linux/amd64
+    entrypoint: [bash, -c]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
+    environment:
+      <<: *bench_env
+    volumes: *bench_volumes
+    depends_on: {}
+    restart: on-failure
+
+  db:
+    image: {{ MARIADB_IMAGE }}
+    container_name: {{ NAME }}-db
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ DB_ROOT_PASSWORD }}"
+      MARIADB_ROOT_PASSWORD: "{{ DB_ROOT_PASSWORD }}"
+    volumes:
+      - db-data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: {{ REDIS_IMAGE }}
+    container_name: {{ NAME }}-redis
+    restart: unless-stopped
+
+  # Simple Frappe container without supervisord
+  frappe:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-frappe
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+    volumes: *bench_volumes
+    command: bash -c "tail -f /dev/null"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
+      - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
+      - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
+      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8000"
+
+volumes:
+  db-data:
+  sites:
+  logs:
+  assets:
