@@ -521,7 +521,7 @@ def cloudflare() -> None:
     pass
 
 
-@cloudflare.command("token")
+@app.command("cloudflare-token")
 def cloudflare_token(
     token: str = typer.Option(..., "--token", "-t", help="Cloudflare Tunnel token"),
     email: str = typer.Option(..., "--email", "-e", help="ACME email for SSL certificates")
@@ -534,14 +534,14 @@ def cloudflare_token(
         cloudflare_manager.setup_tunnel(token, email)
         console.print("[green]✅ Cloudflare Tunnel configured successfully![/green]")
         console.print("\n[cyan]Next steps:[/cyan]")
-        console.print("1. Start services: [bold]fm cloudflare start[/bold]")
+        console.print("1. Start services: [bold]fm cloudflare-start[/bold]")
         console.print("2. Check dashboard: [bold]http://traefik.mby-solution.vip:8080[/bold]")
         console.print("3. Create benches: [bold]fm create site1 site1.mby-solution.vip[/bold]")
     except Exception as exc:
         _handle_error(exc)
 
 
-@cloudflare.command("start")
+@app.command("cloudflare-start")
 def cloudflare_start() -> None:
     """Start Cloudflare Tunnel and Traefik containers."""
     try:
@@ -558,7 +558,7 @@ def cloudflare_start() -> None:
         _handle_error(exc)
 
 
-@cloudflare.command("stop")
+@app.command("cloudflare-stop")
 def cloudflare_stop() -> None:
     """Stop Cloudflare Tunnel and Traefik containers."""
     try:
@@ -571,7 +571,7 @@ def cloudflare_stop() -> None:
         _handle_error(exc)
 
 
-@cloudflare.command("status")
+@app.command("cloudflare-status")
 def cloudflare_status() -> None:
     """Show Cloudflare Tunnel services status."""
     try:
