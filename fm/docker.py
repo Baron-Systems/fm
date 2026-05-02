@@ -145,14 +145,14 @@ PY"""
 
 def exec_in_backend(bench_dir: Path, command: str) -> None:
     """
-    Execute command in frappe container.
+    Execute command in backend container.
     Uses sh -lc to preserve quoting and arguments.
     """
     _exec_in_backend_with_retry(bench_dir=bench_dir, command=command, capture_output=False)
 
 
 def exec_in_backend_output(bench_dir: Path, command: str) -> str:
-    """Execute command in frappe container and return stdout."""
+    """Execute command in backend container and return stdout."""
     result = _exec_in_backend_with_retry(bench_dir=bench_dir, command=command, capture_output=True)
     return result.stdout
 
@@ -165,7 +165,7 @@ def _exec_in_backend_with_retry(
     delay_seconds: float = 2.0,
 ) -> subprocess.CompletedProcess[str]:
     """
-    Execute command in frappe container with retry for transient Docker errors.
+    Execute command in backend container with retry for transient Docker errors.
     Docker can return "unable to upgrade to tcp, received 409" while container
     state is still converging immediately after compose up.
     """
@@ -174,7 +174,7 @@ def _exec_in_backend_with_retry(
         try:
             return run_docker_compose(
                 bench_dir,
-                ["exec", "-T", "--interactive=false", "frappe", "sh", "-lc", command],
+                ["exec", "-T", "--interactive=false", "backend", "sh", "-lc", command],
                 capture_output=capture_output,
             )
         except DockerCommandError as exc:
@@ -183,6 +183,8 @@ def _exec_in_backend_with_retry(
                 "received 409" in msg
                 or "is restarting" in msg
                 or "not running" in msg
+                or "failed precondition" in msg
+                or "cannot exec in a stopped state" in msg
                 or "no such exec instance" in msg
                 or "failed to open stdin fifo" in msg
                 or "unknown docker error" in msg
@@ -203,11 +205,11 @@ def exec_backend_interactive(bench_dir: Path, args: list[str]) -> None:
     """
     if args == ["bash"]:
         # For bash shell, use direct execution with proper environment
-        run_docker_compose(bench_dir, ["exec", "frappe", "bash"], capture_output=False)
+        run_docker_compose(bench_dir, ["exec", "backend", "bash"], capture_output=False)
     else:
         # For other commands, use shell environment
         shell_cmd = " ".join(args)
-        run_docker_compose(bench_dir, ["exec", "frappe", "sh", "-lc", shell_cmd], capture_output=False)
+        run_docker_compose(bench_dir, ["exec", "backend", "sh", "-lc", shell_cmd], capture_output=False)
 
 
 def docker_available() -> bool:

@@ -91,7 +91,9 @@ def _render_compose(
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    template = env.get_template("docker-compose.yml.j2")
+    # Use the multi-service compose template that matches the rest of the
+    # orchestration code (`backend`, `frontend`, `db`, `redis`, etc.).
+    template = env.get_template("docker-compose-old-multi.yml.j2")
     return template.render(
         NAME=name,
         DOMAIN=domain,
