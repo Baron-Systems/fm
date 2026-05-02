@@ -183,7 +183,7 @@ def _exec_in_backend_with_retry(
         try:
             return run_docker_compose(
                 bench_dir,
-                ["exec", "-T", "--interactive=false", "frappe", "sh", "-lc", command],
+                ["exec", "-T", "--interactive=false", "backend", "sh", "-lc", command],
                 capture_output=capture_output,
             )
         except DockerCommandError as exc:
