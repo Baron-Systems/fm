@@ -64,52 +64,94 @@ services:
     container_name: {{ NAME }}-redis
     restart: unless-stopped
 
-  # Single Frappe Container - Simple and Direct Approach
-  frappe:
+  # Backend service - Frappe application server
+  backend:
     <<: [*depends_on_configurator, *customizable_image]
-    container_name: {{ NAME }}-frappe
+    container_name: {{ NAME }}-backend
     platform: linux/amd64
     environment:
       <<: *bench_env
     volumes: *bench_volumes
-    # Wait for bench to be ready, then start services
-    command: >
-      bash -c "
-      echo 'Starting container initialization...'
-      
-      # Check if we're in the right directory
-      cd /home/frappe/frappe-bench || exit 1
-      echo 'Changed to bench directory'
-      
-      # List what's in the directory
-      echo 'Current directory contents:'
-      ls -la
-      
-      # Wait for bench to be fully initialized
-      echo 'Waiting for bench initialization...'
-      timeout=300  # 5 minutes max wait
-      elapsed=0
-      while ! bench --version >/dev/null 2>&1; do
-        if [ $elapsed -ge $timeout ]; then
-          echo 'Timeout waiting for bench to be ready'
-          exit 1
-        fi
-        echo 'Bench not ready yet, waiting... ('$elapsed's elapsed)'
-        sleep 5
-        elapsed=$((elapsed + 5))
-      done
-      
-      echo 'Bench is ready, starting services...'
-      
-      # Start Frappe backend
-      exec bench serve --port=8000 --no-reload
-      "
+    command: bench serve --port=8000 --no-reload
+    restart: unless-stopped
+
+  # Frontend service - Nginx reverse proxy
+  frontend:
+    <<: *customizable_image
+    container_name: {{ NAME }}-frontend
+    platform: linux/amd64
+    depends_on:
+      - backend
+    environment:
+      <<: *bench_env
+      BACKEND: backend:8000
+      FRAPPE_SITE_NAME_HEADER: "{{ DOMAIN }}"
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: 120
+      CLIENT_MAX_BODY_SIZE: 50m
+    volumes: *bench_volumes
+    command: nginx-entrypoint.sh
+    restart: unless-stopped
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.{{ NAME }}.rule=Host(`{{ DOMAIN }}`)"
       - "traefik.http.routers.{{ NAME }}.entrypoints=websecure"
       - "traefik.http.routers.{{ NAME }}.tls.certresolver={{ CERTRESOLVER }}"
-      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=8000"
+      - "traefik.http.services.{{ NAME }}.loadbalancer.server.port=80"
+
+  # WebSocket service
+  websocket:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-websocket
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+      FRAPPE_REDIS_CACHE: redis://redis:6379
+      FRAPPE_REDIS_QUEUE: redis://redis:6379
+    volumes: *bench_volumes
+    command: node apps/frappe/socketio.js
+    restart: unless-stopped
+
+  # Queue workers
+  queue-short:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-queue-short
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+      FRAPPE_REDIS_CACHE: redis://redis:6379
+      FRAPPE_REDIS_QUEUE: redis://redis:6379
+    volumes: *bench_volumes
+    command: bench worker --queue short,default
+    restart: unless-stopped
+
+  queue-long:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-queue-long
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+      FRAPPE_REDIS_CACHE: redis://redis:6379
+      FRAPPE_REDIS_QUEUE: redis://redis:6379
+    volumes: *bench_volumes
+    command: bench worker --queue long,default,short
+    restart: unless-stopped
+
+  # Scheduler
+  scheduler:
+    <<: [*depends_on_configurator, *customizable_image]
+    container_name: {{ NAME }}-scheduler
+    platform: linux/amd64
+    environment:
+      <<: *bench_env
+      FRAPPE_REDIS_CACHE: redis://redis:6379
+      FRAPPE_REDIS_QUEUE: redis://redis:6379
+    volumes: *bench_volumes
+    command: bench schedule
+    restart: unless-stopped
 
 volumes:
   db-data:
