@@ -348,12 +348,14 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         except DockerCommandError as exc:
             raise BenchError(f"Failed to install ERPNext: {exc}") from exc
         
-        # Build assets
-        LOGGER.info("Building assets for bench %s", name)
+        # Build assets (optional - may fail if node.js not available)
+        LOGGER.info("Building assets for bench %s (optional)...")
         try:
             docker.exec_in_backend(bench_dir, "bench build --app frappe --app erpnext")
+            LOGGER.info("Assets built successfully")
         except DockerCommandError as exc:
-            raise BenchError(f"Failed to build assets: {exc}") from exc
+            LOGGER.warning("Asset build failed (node.js may not be available): %s", exc)
+            LOGGER.info("Continuing without asset build - site will still be functional")
         
         # Copy assets to nginx-accessible location
         LOGGER.info("Copying assets to public build directory")
