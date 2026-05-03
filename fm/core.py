@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shlex
 import socket
 import shutil
 import time
@@ -211,8 +210,8 @@ def _wait_for_core_dependencies(bench_dir: Path, timeout: int = 120) -> None:
 
 
 def _wait_for_backend(bench_dir: Path, timeout: int = 300) -> None:
-    """Wait for frontend nginx service to be ready."""
-    docker.wait_for_service_in_backend(bench_dir, "frontend", 80, timeout=timeout)
+    """Wait for backend service to be ready."""
+    docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=timeout)
 
 
 def _wait_for_dependencies(bench_dir: Path, timeout: int = 120) -> None:
@@ -273,7 +272,7 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         name=name,
         domain=domain,
         site_name=domain,
-        db_root_password=_escape_compose_env(db_root_password),
+        db_root_password=db_root_password,
         certresolver=cfg.certresolver,
         erpnext_image=cfg.erpnext_image,
         mariadb_image=cfg.mariadb_image,
@@ -313,14 +312,11 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         LOGGER.info("Waiting for backend service (port 8000)...")
         docker.wait_for_service_in_backend(bench_dir, "backend", 8000, timeout=120)
         
-        # Wait for frontend service to be ready
-        LOGGER.info("Waiting for frontend service (port 80)...")
-        docker.wait_for_service_in_backend(bench_dir, "frontend", 80, timeout=120)
-        
         # Create the site with ERPNext app (official Frappe Docker method)
         LOGGER.info("Creating site %s with ERPNext...", domain)
         try:
             # Use docker compose exec directly (official method)
+            # Pass args as raw list - subprocess handles quoting automatically
             result = run_docker_compose(
                 bench_dir,
                 [
@@ -328,39 +324,31 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
                     "backend",
                     "bench",
                     "new-site",
-                    shlex.quote(domain),
-                    "--mariadb-user-host-login-scope='%'",
-                    f"--db-root-password={shlex.quote(db_root_password)}",
-                    f"--admin-password={shlex.quote(admin_password)}",
+                    domain,
+                    "--mariadb-user-host-login-scope=%",
+                    f"--db-root-password={db_root_password}",
+                    f"--admin-password={admin_password}",
                     "--install-app",
                     "erpnext"
                 ],
                 capture_output=True,
             )
-            
+
             if result.returncode != 0:
                 raise DockerCommandError(f"Site creation failed: {result.stderr}")
-                
+
             LOGGER.info("Site created and ERPNext installed successfully")
         except DockerCommandError as exc:
             raise BenchError(f"Failed to create site and install ERPNext: {exc}") from exc
         
-        # Skip asset build for now (requires Node.js setup)
-        LOGGER.info("Skipping asset build (can be done later with 'bench build')")
-        # TODO: Add Node.js setup or use external build service
-        
-        # Copy assets to nginx-accessible location (optional)
-        LOGGER.info("Copying assets to public build directory (optional)...")
+        # Build assets (optional - requires Node.js in image)
+        LOGGER.info("Building assets (optional)...")
         try:
-            docker.exec_in_backend(
-                bench_dir,
-                f"bash utils/post_build.sh {shlex.quote(domain)}"
-            )
-            LOGGER.info("Assets copied successfully")
+            docker.exec_in_backend(bench_dir, "bench build")
+            LOGGER.info("Assets built successfully")
         except DockerCommandError as exc:
-            # Non-critical error, script may not exist
-            LOGGER.warning("Asset copying skipped (post_build script not available): %s", exc)
-            LOGGER.info("Continuing - site will still be functional")
+            LOGGER.warning("Asset build skipped: %s", exc)
+            LOGGER.info("Continuing without assets - site will still be functional")
         
         creds_path = _save_credentials(bench_dir, domain, admin_password, db_root_password)
         state_upsert_bench(
@@ -388,9 +376,8 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
 def start_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_start(bench_dir)
-    # Wait for services to be healthy with proper sequence
     LOGGER.info("Waiting for core services to start...")
-    time.sleep(30)  # Give supervisord time to start services
+    time.sleep(15)  # Give bench serve time to start
     _wait_for_core_dependencies(bench_dir, timeout=120)
     LOGGER.info("Waiting for backend service...")
     _wait_for_backend(bench_dir, timeout=180)
@@ -406,9 +393,8 @@ def stop_bench(name: str, config: FMConfig | None = None) -> None:
 def restart_bench(name: str, config: FMConfig | None = None) -> None:
     bench_dir = ensure_bench_exists(name, config=config)
     docker.compose_restart(bench_dir)
-    # Wait for services to be healthy with proper sequence
     LOGGER.info("Waiting for core services to restart...")
-    time.sleep(30)  # Give supervisord time to restart services
+    time.sleep(15)  # Give bench serve time to restart
     _wait_for_core_dependencies(bench_dir, timeout=120)
     LOGGER.info("Waiting for backend service...")
     _wait_for_backend(bench_dir, timeout=180)
@@ -525,8 +511,8 @@ def _collect_service_health(bench_dir: Path, backend_running: bool) -> dict[str,
 import json
 import socket
 
-# Official multi-service architecture - check frontend:80 (nginx)
-checks = {"frontend:80": ("localhost", 80), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
+# Check backend:8000 directly (Werkzeug dev server)
+checks = {"backend:8000": ("localhost", 8000), "db:3306": ("db", 3306), "redis:6379": ("redis", 6379)}
 result = {}
 for key, (host, port) in checks.items():
     try:
