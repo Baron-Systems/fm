@@ -197,7 +197,6 @@ def _exec_in_backend_with_retry(
                 or "no such exec instance" in msg
                 or "failed to open stdin fifo" in msg
                 or "unknown docker error" in msg
-                or "no such file or directory" in msg
             )
             if not transient or attempt == retries:
                 raise
