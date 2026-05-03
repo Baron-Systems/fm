@@ -80,7 +80,7 @@ services:
     command: bench serve --port=8000 --noreload
     restart: unless-stopped
 
-  # Frontend service - Nginx reverse proxy
+  # Frontend service - Nginx reverse proxy (using bench serve for now)
   frontend:
     <<: *customizable_image
     container_name: {{ NAME }}-frontend
@@ -98,7 +98,7 @@ services:
       PROXY_READ_TIMEOUT: 120
       CLIENT_MAX_BODY_SIZE: 50m
     volumes: *bench_volumes
-    command: nginx-entrypoint.sh
+    command: bench serve --port=80 --noreload
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
