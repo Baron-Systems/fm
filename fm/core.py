@@ -344,8 +344,21 @@ def create_bench(name: str, domain: str, config: FMConfig | None = None) -> tupl
         # Build assets (optional - requires Node.js in image)
         LOGGER.info("Building assets (optional)...")
         try:
-            docker.exec_in_backend(bench_dir, "bench build")
-            LOGGER.info("Assets built successfully")
+            # Check if Node.js is available first (direct call, no retry)
+            node_check = run_docker_compose(
+                bench_dir,
+                ["exec", "-T", "backend", "sh", "-lc", "node -v"],
+                capture_output=True,
+            )
+            if node_check.returncode == 0:
+                run_docker_compose(
+                    bench_dir,
+                    ["exec", "-T", "backend", "sh", "-lc", "bench build"],
+                    capture_output=True,
+                )
+                LOGGER.info("Assets built successfully")
+            else:
+                LOGGER.warning("Node.js not available in container, skipping asset build")
         except DockerCommandError as exc:
             LOGGER.warning("Asset build skipped: %s", exc)
             LOGGER.info("Continuing without assets - site will still be functional")
